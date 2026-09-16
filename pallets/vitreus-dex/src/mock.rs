@@ -106,7 +106,28 @@ impl crate::CreatorFeeRecipient<NativeOrAssetId, u128> for MockCreators {
     }
 }
 
+/// D9: a recording treasury sink. `SINK_VAULT` is the account the launch
+/// asset's treasury slice is pushed to (`None` = no treasury, fold into
+/// protocol); `SINK_NOTED` is every `(asset id, amount)` the DEX reported.
+pub const VAULT: u128 = 88;
+pub struct MockSink;
+impl crate::TreasurySink<NativeOrAssetId, u128, u128> for MockSink {
+    fn account_for(asset: &NativeOrAssetId) -> Option<u128> {
+        match asset {
+            NativeOrAssetId::WithId(id) if *id == LAUNCH_ID => SINK_VAULT.with(|v| *v.borrow()),
+            _ => None,
+        }
+    }
+    fn note_fee(asset: &NativeOrAssetId, amount: u128) {
+        if let NativeOrAssetId::WithId(id) = asset {
+            SINK_NOTED.with(|n| n.borrow_mut().push((*id, amount)));
+        }
+    }
+}
+
 thread_local! {
+    pub static SINK_VAULT: std::cell::RefCell<Option<u128>> = const { std::cell::RefCell::new(None) };
+    pub static SINK_NOTED: std::cell::RefCell<Vec<(u32, u128)>> = const { std::cell::RefCell::new(Vec::new()) };
     /// Creators primed by `MockBenchHelper::set_creator` (benchmarks only).
     static PRIMED_CREATORS: std::cell::RefCell<std::collections::BTreeMap<u32, u128>> =
         std::cell::RefCell::new(std::collections::BTreeMap::new());
@@ -153,6 +174,7 @@ impl Config for Test {
     type ExcessRecipient = ExcessRecipient;
     type DefaultProtocolFeeRecipient = ExcessRecipient;
     type CreatorFeeRecipient = MockCreators;
+    type TreasurySink = MockSink;
     type DefaultBidWindowBlocks = ConstU64<10>;
     type DefaultSettlementWindowBlocks = ConstU64<5>;
     type DefaultSolverBondAmount = ConstU128<1_000_000_000_000>;
@@ -192,6 +214,10 @@ pub(crate) fn new_test_ext() -> sp_io::TestExternalities {
     .unwrap();
 
     let mut ext = sp_io::TestExternalities::new(t);
-    ext.execute_with(|| System::set_block_number(1));
+    ext.execute_with(|| {
+        System::set_block_number(1);
+        SINK_VAULT.with(|v| *v.borrow_mut() = None);
+        SINK_NOTED.with(|n| n.borrow_mut().clear());
+    });
     ext
 }

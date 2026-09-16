@@ -198,7 +198,7 @@ mod benchmarks {
         let pair = Dex::<T>::canonical_pair(native::<T>(), asset.clone());
         Pools::<T>::mutate(&pair, |p| {
             if let Some(p) = p {
-                p.routing = FeeRouting { protocol_bps: 5, creator_bps: 5 };
+                p.routing = FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 0 };
             }
         });
         let caller: T::AccountId = whitelisted_caller();
@@ -418,9 +418,9 @@ mod benchmarks {
         let origin = manage_origin::<T>()?;
 
         #[extrinsic_call]
-        _(origin as T::RuntimeOrigin, 5, 5);
+        _(origin as T::RuntimeOrigin, 5, 5, 0);
 
-        assert_eq!(DefaultFeeRouting::<T>::get(), FeeRouting { protocol_bps: 5, creator_bps: 5 });
+        assert_eq!(DefaultFeeRouting::<T>::get(), FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 0 });
         Ok(())
     }
 

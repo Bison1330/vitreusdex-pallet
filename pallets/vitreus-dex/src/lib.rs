@@ -63,7 +63,7 @@ use frame_support::{
             Fortitude::Polite,
             Preservation::{Expendable, Preserve},
         },
-        Contains,
+        Contains, Get,
     },
     PalletId,
 };
@@ -91,37 +91,57 @@ pub const MINIMUM_LIQUIDITY: u32 = 1_000;
 /// Basis-point denominator for fee routing.
 pub const BPS: u32 = 10_000;
 
-/// Upper bound on `protocol_bps + creator_bps` (D4). Equal to the smallest
-/// whitelisted fee tier (0.1% = 10 bps) so that every tier can carry the
-/// routed slices and the pool always keeps `fee_tier × 10 − routed ≥ 0`.
-/// A default that no tier could honour would otherwise fail launchpad
-/// graduations at seed time.
-pub const MAX_ROUTED_BPS: u16 = 10;
+/// Smallest whitelisted fee tier (0.1 %). A `create_pool` pool may be this
+/// tier, and it carries only the protocol slice (creator and treasury fold
+/// into the pool), so `DefaultFeeRouting.protocol_bps ≤ MIN_FEE_TIER × 10`.
+pub const MIN_FEE_TIER: u32 = 1;
 
-/// D4: how a pool's swap fee is split. Snapshotted into [`PoolInfo`] when the
-/// pool is created or seeded and never changed afterwards — the same
+/// Smallest tier the launchpad may seed a pool at (LAUNCH_TREASURY_SPEC §7.2
+/// tightened it from 1 to 3). A seeded pool carries every routed slice, so
+/// `DefaultFeeRouting.routed_bps() ≤ MIN_LAUNCH_FEE_TIER × 10`.
+pub const MIN_LAUNCH_FEE_TIER: u32 = 3;
+
+/// D4 / D9: how a pool's swap fee is split. Snapshotted into [`PoolInfo`] when
+/// the pool is created or seeded and never changed afterwards — the same
 /// per-launch immutability the launchpad gives its curve terms. The pool
-/// keeps `fee_tier × 10 − protocol_bps − creator_bps` bps.
+/// keeps `fee_tier × 10 − protocol_bps − creator_bps − treasury_bps` bps.
 ///
 /// Routed slices are always denominated in the native asset (VTRS): taken
 /// from the input when VTRS is `asset_in`, from the output when it is
 /// `asset_out`. Pools with no native side route nothing.
+///
+/// D9: the bound is tier-relative — a pool may route at most its whole
+/// tier (`routed ≤ fee_tier × 10`) — and is checked where the tier is
+/// known (create / seed). `set_default_fee_routing` checks the default
+/// against the smallest tier each kind of pool can have, so a default no
+/// pool could honour cannot be stored (that would fail every launchpad
+/// graduation at seed time, D4).
 #[derive(Clone, Copy, Encode, Decode, Default, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 pub struct FeeRouting {
     /// Share of every swap sent to the protocol fee recipient, in bps of the swap.
     pub protocol_bps: u16,
     /// Share of every swap accrued for the pool's creator, in bps of the swap.
     pub creator_bps: u16,
+    /// D9: share of every swap pushed to the launch's treasury, in bps of the
+    /// swap. Zero for pools that predate D9 and for pools with no treasury.
+    pub treasury_bps: u16,
 }
 
 impl FeeRouting {
-    /// `protocol_bps + creator_bps`.
+    /// `protocol_bps + creator_bps + treasury_bps`.
     pub fn routed_bps(&self) -> u16 {
-        self.protocol_bps.saturating_add(self.creator_bps)
+        self.protocol_bps.saturating_add(self.creator_bps).saturating_add(self.treasury_bps)
     }
-    /// Whether the split is within [`MAX_ROUTED_BPS`].
-    pub fn is_valid(&self) -> bool {
-        self.routed_bps() <= MAX_ROUTED_BPS
+    /// D9: whether a pool of `fee_tier` can carry this split.
+    pub fn is_valid_for(&self, fee_tier: u32) -> bool {
+        u32::from(self.routed_bps()) <= fee_tier.saturating_mul(10)
+    }
+    /// D9: whether this split may be stored as the default: a plain pool at
+    /// the smallest tier carries the protocol slice alone; a seeded pool at
+    /// the smallest launch tier carries all three.
+    pub fn is_valid_default(&self) -> bool {
+        u32::from(self.protocol_bps) <= MIN_FEE_TIER.saturating_mul(10)
+            && self.is_valid_for(MIN_LAUNCH_FEE_TIER)
     }
 }
 
@@ -139,6 +159,30 @@ impl<AssetKind, AccountId> CreatorFeeRecipient<AssetKind, AccountId> for () {
     fn creator_fee_recipient(_: &AssetKind) -> Option<AccountId> {
         None
     }
+}
+
+/// D9: where a launch asset's treasury slice goes. Unlike the protocol and
+/// creator slices this one is *pushed* inside the swap, which D4 forbade for
+/// those two: the recipient here is a pallet-owned account that always
+/// exists and is never user-settable, so the two failures D4 guarded against
+/// — a reaped recipient, a mis-set one — cannot occur. The runtime binds this
+/// to `pallet_launch_treasury` on testnet and to `()` on mainnet, where every
+/// treasury slice folds into the protocol share.
+///
+/// Both methods are consulted inside `do_swap` and must be O(1).
+pub trait TreasurySink<AssetKind, AccountId, Balance> {
+    /// The account that receives `asset`'s treasury slice, or `None` to fold
+    /// the slice into the protocol share.
+    fn account_for(asset: &AssetKind) -> Option<AccountId>;
+    /// Called after the transfer so the sink can attribute it. Infallible.
+    fn note_fee(asset: &AssetKind, amount: Balance);
+}
+
+impl<AssetKind, AccountId, Balance> TreasurySink<AssetKind, AccountId, Balance> for () {
+    fn account_for(_: &AssetKind) -> Option<AccountId> {
+        None
+    }
+    fn note_fee(_: &AssetKind, _: Balance) {}
 }
 
 /// On-chain record of a trading pair's reserves, fee tier and dedicated sub-account.
@@ -222,6 +266,27 @@ pub trait PoolManager<AccountId, AssetKind, Balance, BlockNumber> {
         asset_b: AssetKind,
         lock_until: BlockNumber,
     ) -> DispatchResult;
+
+    /// D9: swap exactly `amount_in` of `asset_in` for `asset_out` on behalf
+    /// of `who`, delivering to `who`. The extrinsic's body without the
+    /// origin check, for a pallet that owns `who` (the launch treasury's
+    /// buy-and-burn). Returns the amount out.
+    fn swap_for(
+        who: &AccountId,
+        asset_in: AssetKind,
+        asset_out: AssetKind,
+        amount_in: Balance,
+        amount_out_min: Balance,
+    ) -> Result<Balance, DispatchError>;
+
+    /// D9: the pool's live native-side reserve and the other asset's, as
+    /// `(native, other)`, read from balances (the quoting rule on
+    /// [`PoolInfo`]); `None` if there is no such pool or no native side.
+    fn native_reserves(asset: AssetKind) -> Option<(Balance, Balance)>;
+
+    /// D9: the last block a swap ran against `asset`'s native pool, for the
+    /// treasury's dormancy rule; `None` if the pool does not exist.
+    fn last_swap_block(asset: AssetKind) -> Option<BlockNumber>;
 }
 
 /// The single entry point through which a pool for a *reserved* asset (see
@@ -266,7 +331,10 @@ pub mod pallet {
     use frame_support::pallet_prelude::*;
     use frame_system::pallet_prelude::*;
 
-    const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+    /// v2 (D9): `FeeRouting.treasury_bps`, `LastSwapBlock`. No chain the
+    /// submission targets has v1 pools, so there is no migration here; the
+    /// fork carries its own.
+    const STORAGE_VERSION: StorageVersion = StorageVersion::new(2);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
@@ -336,6 +404,10 @@ pub mod pallet {
         /// D4: who may claim a pool's creator share. `()` means nobody (no
         /// creators; creator slices then fold into the pool at snapshot).
         type CreatorFeeRecipient: CreatorFeeRecipient<Self::AssetKind, Self::AccountId>;
+
+        /// D9: where a launch asset's treasury slice is pushed. `()` folds
+        /// every treasury slice into the protocol share.
+        type TreasurySink: TreasurySink<Self::AssetKind, Self::AccountId, Self::Balance>;
 
         // ---- Solver marketplace config ----
 
@@ -412,6 +484,14 @@ pub mod pallet {
     /// fee escrow sub-account until `withdraw_protocol_fees`.
     #[pallet::storage]
     pub type ProtocolFeesUnclaimed<T: Config> = StorageValue<_, T::Balance, ValueQuery>;
+
+    /// D9: the last block a swap ran against each pool (canonical pair), for
+    /// the launch treasury's dormancy rule. Kept beside `PoolInfo` rather
+    /// than in it so the pool record's shape — which every quoter decodes —
+    /// does not change for a field only one reader wants.
+    #[pallet::storage]
+    pub type LastSwapBlock<T: Config> =
+        StorageMap<_, Blake2_128Concat, (T::AssetKind, T::AssetKind), BlockNumberFor<T>, OptionQuery>;
 
     // ---- Settlement: governance-adjustable parameters ----
 
@@ -569,6 +649,9 @@ pub mod pallet {
             protocol: T::Balance,
             /// Native amount accrued for the pool's creator.
             creator: T::Balance,
+            /// D9: native amount pushed to the launch treasury (or folded
+            /// into `protocol` when there is no sink for the asset).
+            treasury: T::Balance,
         },
         /// D4: a creator claimed their accrued share for a pool.
         CreatorFeesClaimed {
@@ -791,7 +874,7 @@ pub mod pallet {
         /// `ExcessRecipient` (for example, the recipient has no provider and the
         /// asset is not sufficient). Fix the recipient and retry the seed.
         ExcessRecipientCannotReceive,
-        /// D4: `protocol_bps + creator_bps` exceeds `MAX_ROUTED_BPS`.
+        /// D4 / D9: the split is more than the pool's tier can carry.
         InvalidFeeRouting,
         /// D4: no creator is known for this asset, so it has no creator share.
         NoCreatorForAsset,
@@ -1643,17 +1726,19 @@ pub mod pallet {
 
         /// D4: set the fee split for pools created or seeded from now on.
         /// Gated on `ManageOrigin`. Never changes an existing pool's split.
-        /// `protocol_bps + creator_bps` must be `≤ MAX_ROUTED_BPS`.
+        /// D9: must be a split every kind of pool can carry
+        /// ([`FeeRouting::is_valid_default`]).
         #[pallet::call_index(16)]
         #[pallet::weight(<T as Config>::WeightInfo::set_default_fee_routing())]
         pub fn set_default_fee_routing(
             origin: OriginFor<T>,
             protocol_bps: u16,
             creator_bps: u16,
+            treasury_bps: u16,
         ) -> DispatchResult {
             T::ManageOrigin::ensure_origin(origin)?;
-            let routing = FeeRouting { protocol_bps, creator_bps };
-            ensure!(routing.is_valid(), Error::<T>::InvalidFeeRouting);
+            let routing = FeeRouting { protocol_bps, creator_bps, treasury_bps };
+            ensure!(routing.is_valid_default(), Error::<T>::InvalidFeeRouting);
             DefaultFeeRouting::<T>::put(routing);
             Self::deposit_event(Event::DefaultFeeRoutingSet { routing });
             Ok(())
@@ -1745,15 +1830,20 @@ pub mod pallet {
 
         /// D4: the split a pool gets at creation. Snapshotted from the live
         /// default; a pool with no native side can route nothing and gets
-        /// zero; `with_creator = false` (plain `create_pool`) folds the
-        /// creator slice into the pool since nobody could claim it.
-        fn routing_for_new_pool(pair: &(T::AssetKind, T::AssetKind), with_creator: bool) -> FeeRouting {
+        /// zero; `seeded = false` (plain `create_pool`) folds the creator
+        /// and treasury slices into the pool since nobody could claim them
+        /// (D9: a treasury exists only for a launch asset).
+        fn routing_for_new_pool(pair: &(T::AssetKind, T::AssetKind), seeded: bool) -> FeeRouting {
             let native = T::NativeAsset::get().encode();
             if pair.0.encode() != native && pair.1.encode() != native {
                 return FeeRouting::default();
             }
             let d = DefaultFeeRouting::<T>::get();
-            FeeRouting { protocol_bps: d.protocol_bps, creator_bps: if with_creator { d.creator_bps } else { 0 } }
+            if seeded {
+                d
+            } else {
+                FeeRouting { protocol_bps: d.protocol_bps, creator_bps: 0, treasury_bps: 0 }
+            }
         }
 
         /// `floor(amount × bps / BPS)`.
@@ -1877,7 +1967,7 @@ pub mod pallet {
 
             // D4: no creator can exist for a governance-created pool.
             let routing = Self::routing_for_new_pool(&pair, false);
-            Self::insert_new_pool(&pair, fee_tier, routing);
+            Self::insert_new_pool(&pair, fee_tier, routing)?;
             Ok(())
         }
 
@@ -1913,8 +2003,11 @@ pub mod pallet {
         }
 
         /// Write a fresh, empty pool record for an already-canonical `pair`.
-        /// Callers must have checked that no pool exists.
-        fn insert_new_pool(pair: &(T::AssetKind, T::AssetKind), fee_tier: u32, routing: FeeRouting) {
+        /// Callers must have checked that no pool exists. D9: the snapshotted
+        /// split must fit the tier (`InvalidFeeRouting` otherwise — at seed
+        /// time that surfaces as a deferred graduation, FM-11).
+        fn insert_new_pool(pair: &(T::AssetKind, T::AssetKind), fee_tier: u32, routing: FeeRouting) -> DispatchResult {
+            ensure!(routing.is_valid_for(fee_tier), Error::<T>::InvalidFeeRouting);
             let pool = PoolInfo {
                 reserve_a: Zero::zero(),
                 reserve_b: Zero::zero(),
@@ -1932,6 +2025,7 @@ pub mod pallet {
                 asset_b: pair.1.clone(),
                 fee_tier,
             });
+            Ok(())
         }
 
         /// Body of [`ReservedPoolSeeder::seed_reserved_pool_for`]; see the
@@ -1964,7 +2058,7 @@ pub mod pallet {
                 // D4: a seeded pool has a creator (the launch's fee recipient),
                 // so it snapshots the full default split. An adopted empty
                 // record keeps whatever split it carries.
-                None => Self::insert_new_pool(&pair, fee_tier, Self::routing_for_new_pool(&pair, true)),
+                None => Self::insert_new_pool(&pair, fee_tier, Self::routing_for_new_pool(&pair, true))?,
                 Some(existing) => {
                     let shares = TotalLiquidity::<T>::get(&pair).unwrap_or_else(Zero::zero);
                     ensure!(shares.is_zero(), Error::<T>::PoolAlreadySeeded);
@@ -2337,20 +2431,38 @@ pub mod pallet {
             let amount_out_gross = Self::mul_div_floor(reserve_out, amount_in_after_fee, denom)?;
 
             // Routed slices, always native.
-            let (protocol, creator) = if native_in {
-                (Self::bps_of(amount_in, routing.protocol_bps)?, Self::bps_of(amount_in, routing.creator_bps)?)
+            let (mut protocol, creator, mut treasury) = if native_in {
+                (
+                    Self::bps_of(amount_in, routing.protocol_bps)?,
+                    Self::bps_of(amount_in, routing.creator_bps)?,
+                    Self::bps_of(amount_in, routing.treasury_bps)?,
+                )
             } else if native_out {
                 (
                     Self::bps_of(amount_out_gross, routing.protocol_bps)?,
                     Self::bps_of(amount_out_gross, routing.creator_bps)?,
+                    Self::bps_of(amount_out_gross, routing.treasury_bps)?,
                 )
             } else {
-                (Zero::zero(), Zero::zero())
+                (Zero::zero(), Zero::zero(), Zero::zero())
             };
-            let routed = protocol.checked_add(&creator).ok_or(Error::<T>::Overflow)?;
+            // D9: the treasury slice goes to the launch's treasury sink if
+            // the asset has one, else it folds into the protocol share. The
+            // non-native side of the pair is the launch asset.
+            let other = if native_in { asset_out.clone() } else { asset_in.clone() };
+            let sink = if treasury.is_zero() { None } else { T::TreasurySink::account_for(&other) };
+            if sink.is_none() && !treasury.is_zero() {
+                protocol = protocol.checked_add(&treasury).ok_or(Error::<T>::Overflow)?;
+                treasury = Zero::zero();
+            }
+            let routed = protocol
+                .checked_add(&creator)
+                .ok_or(Error::<T>::Overflow)?
+                .checked_add(&treasury)
+                .ok_or(Error::<T>::Overflow)?;
             // With native in the routed part is a sub-slice of `fee` (bounded
-            // by MAX_ROUTED_BPS ≤ tier); with native out it comes off the
-            // gross output.
+            // by `routed_bps ≤ tier × 10`, D9); with native out it comes off
+            // the gross output.
             let amount_out = if native_out {
                 amount_out_gross.checked_sub(&routed).ok_or(Error::<T>::Overflow)?
             } else {
@@ -2376,12 +2488,13 @@ pub mod pallet {
             )?;
             // D4: move the routed slices out of the pool account into the fee
             // escrow, so neither reserves nor `sync_reserves` ever see them.
-            if !routed.is_zero() {
+            let escrowed = protocol.checked_add(&creator).ok_or(Error::<T>::Overflow)?;
+            if !escrowed.is_zero() {
                 T::Assets::transfer(
                     native.clone(),
                     &pool.pool_account,
                     &Self::fee_escrow_account(),
-                    routed,
+                    escrowed,
                     Expendable,
                 )?;
                 if !protocol.is_zero() {
@@ -2390,6 +2503,12 @@ pub mod pallet {
                 if !creator.is_zero() {
                     CreatorFeesUnclaimed::<T>::mutate(&pair, |t| *t = t.saturating_add(creator));
                 }
+            }
+            // D9: the treasury slice is pushed to the sink (see `TreasurySink`
+            // for why a push is safe here and was not for the other two).
+            if let Some(vault) = sink {
+                T::Assets::transfer(native.clone(), &pool.pool_account, &vault, treasury, Expendable)?;
+                T::TreasurySink::note_fee(&other, treasury);
             }
 
             // Finding 3: only add amount_in_after_fee to reserves; the pool's
@@ -2422,6 +2541,7 @@ pub mod pallet {
 
             let pool_account_for_event = pool.pool_account.clone();
             Pools::<T>::insert(&pair, pool);
+            LastSwapBlock::<T>::insert(&pair, frame_system::Pallet::<T>::block_number());
 
             Self::deposit_event(Event::SwapExecuted {
                 who: who.clone(),
@@ -2439,7 +2559,7 @@ pub mod pallet {
                 recipient: pool_account_for_event,
             });
             if !routed.is_zero() {
-                Self::deposit_event(Event::FeesRouted { pool: pair, protocol, creator });
+                Self::deposit_event(Event::FeesRouted { pool: pair, protocol, creator, treasury });
             }
 
             Ok(amount_out)
@@ -2535,6 +2655,31 @@ impl<T: Config> PoolManager<T::AccountId, T::AssetKind, T::Balance, BlockNumberF
         lock_until: BlockNumberFor<T>,
     ) -> DispatchResult {
         Self::do_lock_liquidity_for(who, asset_a, asset_b, lock_until)
+    }
+
+    fn swap_for(
+        who: &T::AccountId,
+        asset_in: T::AssetKind,
+        asset_out: T::AssetKind,
+        amount_in: T::Balance,
+        amount_out_min: T::Balance,
+    ) -> Result<T::Balance, DispatchError> {
+        Self::do_swap(who, asset_in, asset_out, amount_in, amount_out_min, who)
+    }
+
+    fn native_reserves(asset: T::AssetKind) -> Option<(T::Balance, T::Balance)> {
+        let native = <T::NativeAsset as Get<T::AssetKind>>::get();
+        let pair = Self::canonical_pair(native.clone(), asset.clone());
+        let pool = Pools::<T>::get(&pair)?;
+        Some((
+            T::Assets::balance(native, &pool.pool_account),
+            T::Assets::balance(asset, &pool.pool_account),
+        ))
+    }
+
+    fn last_swap_block(asset: T::AssetKind) -> Option<BlockNumberFor<T>> {
+        let pair = Self::canonical_pair(<T::NativeAsset as Get<T::AssetKind>>::get(), asset);
+        Pools::<T>::contains_key(&pair).then(|| LastSwapBlock::<T>::get(&pair).unwrap_or_default())
     }
 }
 
