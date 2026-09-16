@@ -1399,7 +1399,7 @@ fn metadata_fields_are_bounded() {
 // L — the launch treasury's leg on the curve (LAUNCH_TREASURY_SPEC §7.2).
 // ===========================================================================
 
-use crate::mock::{RecordingSink as _, SINK_NOTED, SINK_VAULT, VAULT};
+use crate::mock::{SINK_NOTED, SINK_VAULT, VAULT};
 
 fn set_params3(share: u16, treasury_share: u16) {
     assert_ok!(Launchpad::set_params(
