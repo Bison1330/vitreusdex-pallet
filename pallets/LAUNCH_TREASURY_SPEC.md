@@ -1,6 +1,6 @@
 # pallet-launch-treasury — Design Specification
 
-**Status:** design, v0 · **Branch:** `design/launch-treasury` off `pr/dex-launchpad` (`423740e`) · **Date:** 2026-09-16 · **Depends on:** `LAUNCHPAD_SPEC.md` (v1, §9 is the idea this document turns into a design)
+**Status:** implemented on this branch (`pallets/launch-treasury`, DEX D9, launchpad L1/L2, testnet wiring); §10 lists where the code departs from the text below · **Branch:** `design/launch-treasury` off `pr/dex-launchpad` (`423740e`) · **Date:** 2026-09-16 · **Depends on:** `LAUNCHPAD_SPEC.md` (v1, §9 is the idea this document turns into a design)
 
 A per-launch treasury for the launchpad, funded by a fixed slice of every trade in a launch token, staked with Vitreus validators as one pooled cooperator, with the staking yield returned to each launch as buy-and-burn of its token. Trading → VTRS → staking → yield → buy pressure → an incentive to trade. Every term is set by governance and identical for every launch; a creator chooses nothing.
 
@@ -197,11 +197,11 @@ The vault is created in the upgrade that adds the pallet (§7.4): funded with `E
 
 ```rust
 pub struct TreasuryTerms {
-    /// Pool-leg slice, in bps of the swap. Snapshotted into the pool's FeeRouting at seed (§7.1).
-    pub pool_treasury_bps: u16,            // 10
-    /// Curve-leg slice, in bps of the curve fee. Snapshotted into CurveParams at create (§7.2).
-    pub curve_treasury_share_bps: u16,     // 2_500 of the fee, i.e. 25 bps of the trade
-    /// Blocks without a trade after which `retire` is allowed. Snapshotted per launch at create.
+    // The two fee slices are governance terms too, but they live where they
+    // are snapshotted: `pool_treasury_bps` (10) in the DEX's DefaultFeeRouting
+    // (§7.1) and `curve_treasury_share_bps` (2_500 of the fee) in the
+    // launchpad's Params (§7.2). This struct holds the rest.
+    /// Blocks without a trade after which `retire` is allowed. Snapshotted per launch when first funded.
     pub dormancy_blocks: BlockNumber,      // 90 * DAYS
     /// Operational (live, not snapshotted) — they bound a keeper's call, not a launch's economics.
     pub min_stake: Balance,                // 1 VTRS: `stake` refuses smaller pending (§6.2 spam bound)
@@ -211,14 +211,14 @@ pub struct TreasuryTerms {
 }
 ```
 
-`set_terms(TreasuryTerms)` — `TreasuryManageOrigin`. Bounds: `pool_treasury_bps ≤ 20`, `curve_treasury_share_bps ≤ 5_000`, `max_burn_impact_bps ∈ [10, 500]`, `keeper_bounty_bps ≤ 200`. The snapshotted fields follow LAUNCHPAD_SPEC §1.4: a change never touches an existing launch.
+`set_terms(TreasuryTerms)` — `TreasuryManageOrigin`. Bounds: `max_burn_impact_bps ∈ [10, 500]`, `keeper_bounty_bps ≤ 200`, `dormancy_blocks > 0`, `min_stake > 0`; the slices are bounded where they live (`is_valid_default`, `MinProtocolShareBps`). The snapshotted fields follow LAUNCHPAD_SPEC §1.4: a change never touches an existing launch.
 
 `TreasuryTargets: BoundedVec<AccountId, MaxTreasuryTargets = 16>` — `set_targets` (`TreasuryManageOrigin`). The vault cooperates with every listed validator that passes the pre-flight filter (§6.2), splitting `ledger.active` equally. Live: a change re-cooperates on the next `stake()` or immediately via `retarget()` (anyone; §6.2).
 
 ### 5.2 Per-launch state (hot)
 
 ```rust
-pub struct LaunchTreasury<T: Config> {
+pub struct TreasuryRecord<Balance, BlockNumber> {   // `LaunchTreasury` is the pallet's runtime name
     /// VTRS received from fees, sitting free in the vault, not yet bonded.
     pub pending: Balance,
     /// Claim on the pooled stake. Value = shares × ledger.active / TotalShares.
@@ -258,7 +258,7 @@ Share price is `ledger.active / TotalShares` read from `energy-generation`'s `Le
 |---|---|---|
 | `pool_treasury_bps` | `PoolInfo.routing.treasury_bps` | at seed (D4 immutability) |
 | `curve_treasury_share_bps` | `CurveParams.treasury_share_bps` | at `create_launch` |
-| `dormancy_blocks` | `LaunchTreasury.dormancy_blocks` | at `create_launch` |
+| `dormancy_blocks` | `TreasuryRecord.dormancy_blocks` | at the first fee that reaches the vault (the launchpad does not call this pallet at create) |
 | validator targets | `TreasuryTargets` | live — where staked VTRS sits is a live governance choice, and one cooperate serves every launch |
 | min stake, impact cap, interval, bounty | `Terms` | live — operational bounds on keepers |
 
@@ -306,7 +306,7 @@ Where the LNRG comes from: `payout_stakers(validator, era)`, called by anyone, d
 1. `harvest()`; realise the launch's claim into `lnrg_accrued`.
 2. **Sell:** the broker's quote does not know its own depth (`get_amount_out` is pure arithmetic; the reserve check is `withdraw`'s `InsufficientLiquidity` at execution), so the pallet reads `free_balance(EnergyBroker::account_id()) − ED` and sells the largest `x ≤ lnrg_accrued` whose quote fits in it: `q = quote(LNRG → VTRS, x)`, then `Swap::swap_exact_tokens_for_tokens(vault, [LNRG, Native], x, min_out = q × (1 − 10 bps), vault, keep_alive = true)`. `lnrg_accrued −= x`. A zero fill (dry broker) is allowed and not an error (FM-T4).
 3. **Bounty:** `b = realised × keeper_bounty_bps / BPS` to the caller; `pending_burn += realised − b`.
-4. **Burn one slice:** require `now − last_burn_block ≥ min_burn_interval`. Venue = the launch's pool if `Graduated`, else its curve. `cap` = the VTRS amount whose quote moves the venue price by `max_burn_impact_bps` (constant-product: `cap ≈ reserve_vtrs × impact / 2`, computed exactly in `U256`; on the curve, from the virtual reserves). `y = min(pending_burn, cap)`. Pool: `Dex::swap_for(vault, Native → asset, y, min_out from the same quote less 10 bps)`; curve: `Launchpad::buy_for(vault, launch_id, y)` (both new in-runtime methods, §7). Then `burn_from(asset, vault, tokens_received, Exact, Force)` — `fungibles::Mutate::burn_from` is an in-runtime call with no origin or admin check (the asset's admin is the launch's escrow; it is not consulted). `pending_burn −= y; last_burn_block = now`.
+4. **Burn one slice:** require `now − last_burn_block ≥ min_burn_interval`. Venue = the launch's pool if `Graduated`, else its curve; a `Complete` curve waiting for its seed has no venue and the slice waits. `cap` = the VTRS amount whose quote moves the venue price by `max_burn_impact_bps` (constant-product: `cap = reserve_vtrs × impact / (2 × BPS)`, in `U256`; on the curve, from the virtual reserves). `y = min(pending_burn, cap)`. Pool: `Dex::swap_for(vault, Native → asset, y, 0)`; curve: `Launchpad::buy_for(vault, launch_id, y, 0)` (both in-runtime methods, §7). Then `burn_from(asset, vault, tokens_received, Exact, Force)` — `fungibles::Mutate::burn_from` is an in-runtime call with no origin or admin check (the asset's admin is the launch's escrow; it is not consulted). **What was spent is measured, not assumed**: the vault's VTRS balance before and after, corrected for the launch's own slice that the buy routes back into `pending` (via `note_fee`, in storage, underneath the record `compound` holds — so `pending` is re-read after the venue call). A curve buy that crosses the target is a partial fill (`do_buy` takes `quote_used`, not the offer), which is why. `pending_burn −= spent; last_burn_block = now`. No `min_out`: a same-block front-run has already moved the state the quote would come from, so a quote-derived minimum protects nothing the cap does not (FM-T1).
 5. Event `Compounded { launch_id, lnrg_sold, vtrs_realised, bounty, vtrs_burned_in, tokens_burned }`.
 
 Steps 2–3 run only when there is something to sell; step 4 only when `pending_burn > 0`. Either alone is a valid call, so a launch with a dry broker still burns what it has, and one with nothing accrued still finishes a retirement.
@@ -315,13 +315,13 @@ Why capped slices: a buy that anyone can see coming is a sandwich target. The ca
 
 ### 6.5 `retire(launch_id)` — dormancy → unbond
 
-Require `Active`; require the venue's last trade block `+ dormancy_blocks ≤ now` (pool: `PoolInfo.last_swap_block`; curve: `CurveState.last_trade_block`; §7). Then: `compound` steps 1–3 (realise and sell what LNRG it can; anything unsellable stays `lnrg_accrued` and is retried by later compounds); redeem `v = shares × active / TotalShares`; `shares = 0; TotalShares −= shares`; dispatch `unbond(v)` as `Signed(vault)`; `status = Retiring { chunk_era: current_era + BondingDuration }`. From here `account_for(asset)` returns `None`. Fails with `NoMoreChunks` if 64 chunks are outstanding (FM-T7); retry after any `finalize_retirement`.
+Require `Active`; require the venue's last trade block `+ dormancy_blocks ≤ now`. The venue's last trade is the later of the curve's `last_trade_block` (§7.2) and the pool's `LastSwapBlock` (§7.1) — a pool that never traded reads as block 0 and must not count, and the graduating buy is the curve's last trade. Then: harvest and settle the launch's LNRG claim into `lnrg_accrued` (the sale itself is `compound`'s, which works on a retiring or retired treasury exactly as on an active one); `pending` joins `pending_burn` (unstaked fees retire with the rest); redeem `v = shares × active / TotalShares`; `shares = 0; TotalShares −= shares`; if `v > 0`, dispatch `unbond(v)` as `Signed(vault)` and `status = Retiring { chunk_era: current_era + BondingDuration }`, else `status = Retired` at once. From here `account_for(asset)` returns `None`. Fails with `NoMoreChunks` if 64 chunks are outstanding (FM-T7), or `QueueFull` if this pallet's own queue is; retry after any `finalize_retirement`. Fails with `VaultInsolvent`-adjacent nothing: a launch whose shares are worth zero (every target slashed to nothing) retires as `Retired` and frees its shares, which is how `TotalShares` returns to zero and `stake` (which refuses `TotalShares > 0 ∧ active == 0` as `VaultInsolvent`) resumes.
 
 `unbond` refuses to leave a cooperator with `active < MinCooperatorBond` (1 VTRS): `InsufficientBond`, "chill first" (energy-generation l.1010–1020). It does **not** chill for you. So `retire` checks `active − v < MinCooperatorBond` and, if so, dispatches `chill` before `unbond`; the vault then holds its remaining dust bonded but un-cooperating, and the next `stake()`'s `retarget` cooperates again (`cooperate` requires `active ≥ MinCooperatorBond`, which the new principal supplies). This only arises when the last meaningful launch retires. `unbond` also merges chunks that mature in the same era into one, so two retirements in one era share a chunk — the `RetiringQueue` (§6.6) credits by launch from its own record, not from chunk boundaries. Test `fm_t8`.
 
 ### 6.6 `finalize_retirement(launch_id)`
 
-Require `Retiring` and `current_era ≥ chunk_era`. Dispatch `withdraw_unbonded(num_slashing_spans)` as `Signed(vault)` — this withdraws *every* matured chunk on the ledger, so `finalize` credits each `Retiring` launch whose era has passed, not only the one named; the pallet keeps `RetiringQueue: BoundedVec<(LaunchId, EraIndex, Balance), MaxUnlockingChunks>` in unbond order so the credit is exact. Credited launches: `pending_burn += amount; status = Retired`. Their VTRS then leaves through `compound` slices (§6.4 step 4) like any yield. When `pending_burn` falls below the venue's minimum quotable amount, the remainder is swept to the protocol recipient and the record is removed.
+Require `Retiring` and `current_era ≥ chunk_era`. Dispatch `withdraw_unbonded(num_slashing_spans)` as `Signed(vault)` — this withdraws *every* matured chunk on the ledger, so `finalize` credits each `Retiring` launch whose era has passed, not only the one named; the pallet keeps `RetiringQueue: BoundedVec<(LaunchId, EraIndex, Balance), MaxUnlockingChunks>` in unbond order so the credit is exact even when the staking pallet has merged two launches' chunks into one era. What is credited is what actually came back, pro rata: a slash during unbonding reduces the chunks too, and the queue's amounts are what was unbonded, not what returns. Credited launches: `pending_burn += credit; status = Retired`. Their VTRS then leaves through `compound` slices (§6.4 step 4) like any yield. A retired treasury closes on the `compound` that leaves it with nothing staked, nothing accrued and `pending_burn` below the existential deposit: that remainder goes to the protocol recipient (`DustSwept`) and the record is removed.
 
 ### 6.7 Governance
 
@@ -340,14 +340,19 @@ Require `Retiring` and `current_era ≥ chunk_era`. Dispatch `withdraw_unbonded(
 
 ```rust
 pub struct FeeRouting { pub protocol_bps: u16, pub creator_bps: u16, pub treasury_bps: u16 }
-/// Every pool keeps at least this much of its tier.
-pub const MIN_POOL_BPS: u16 = 10;
+pub const MIN_FEE_TIER: u32 = 1;          // a create_pool pool carries the protocol slice only
+pub const MIN_LAUNCH_FEE_TIER: u32 = 3;   // a seeded pool carries all three
 impl FeeRouting {
     pub fn routed_bps(&self) -> u16 { protocol + creator + treasury }
-    /// Tier-relative: routed ≤ fee_tier × 10 − MIN_POOL_BPS. Replaces MAX_ROUTED_BPS.
+    /// Tier-relative: routed ≤ fee_tier × 10 (a pool may route its whole tier). Replaces MAX_ROUTED_BPS.
     pub fn is_valid_for(&self, fee_tier: u32) -> bool
+    /// What set_default_fee_routing checks: protocol ≤ MIN_FEE_TIER × 10 and routed ≤ MIN_LAUNCH_FEE_TIER × 10.
+    pub fn is_valid_default(&self) -> bool
 }
-pub struct PoolInfo { …, pub last_swap_block: BlockNumber }   // for dormancy (§6.5)
+/// For dormancy (§6.5). A map beside PoolInfo, not a field in it: the pool
+/// record is what every quoter decodes, and one reader wanting one block
+/// number is not a reason to change its shape.
+pub type LastSwapBlock<T> = StorageMap<(AssetKind, AssetKind), BlockNumber>;
 
 pub trait TreasurySink<AssetKind, AccountId, Balance> {
     /// The account that receives `asset`'s treasury slice, or None to fold it into the protocol share.
@@ -358,11 +363,11 @@ pub trait TreasurySink<AssetKind, AccountId, Balance> {
 type TreasurySink: TreasurySink<…>;   // runtime: LaunchTreasury on testnet, () on mainnet
 ```
 
-- `set_default_fee_routing(protocol, creator, treasury)` validates against the smallest tier the launchpad may seed (`3` after §7.2 tightens the bound): `is_valid_for(3)`. `routing_for_new_pool` folds `treasury_bps` into the pool for `create_pool` pools (no launch, no treasury), exactly as it folds `creator_bps`.
+- `set_default_fee_routing(protocol, creator, treasury)` validates with `is_valid_default`; `insert_new_pool` validates the snapshot against the actual tier (`InvalidFeeRouting`, which at seed time is a deferred graduation, FM-11). `routing_for_new_pool` folds `creator_bps` and `treasury_bps` into the pool for `create_pool` pools (no launch, no treasury).
 - `do_swap`: after computing the routed slices, if `treasury > 0`: `match T::TreasurySink::account_for(&launch_asset) { Some(vault) => transfer(pool_account → vault, treasury); note_fee(...), None => protocol += treasury }`. **This is a push inside a swap, which D4 forbade for creators and the protocol recipient.** It is safe here for the reason D4 gave for the fee escrow: the recipient is a pallet-owned account that always exists (it is bonded, so it has a consumer and cannot be reaped) and is never user-settable, so the two failure modes D4 protected against — a reaped recipient, a mis-set one — cannot occur. The transfer is the same one hop the fee escrow costs.
-- `last_swap_block = now` in `do_swap` (one write the swap already does for reserves).
-- New in-runtime method on `PoolManager`: `swap_for(who, asset_in, asset_out, amount_in, min_out) -> Result<Balance>` — `do_swap` without the extrinsic layer, bound only by the treasury's `Config`. Same trust argument as `ReservedPoolSeeder` (D2): no extrinsic reaches it.
-- Storage version 2 → 3, fork-only migration: existing `PoolInfo`s get `treasury_bps = 0`, `last_swap_block = now`. **Pools that graduated before D9 keep zero treasury routing**, the same per-launch immutability D4 applied to DLNCH.
+- `LastSwapBlock[pair] = now` in `do_swap`.
+- New in-runtime methods on `PoolManager`: `swap_for(who, asset_in, asset_out, amount_in, min_out) -> Result<Balance>` — `do_swap` without the extrinsic layer, delivering to `who`; `native_reserves(asset) -> Option<(native, other)>` from live balances (the quoting rule); `last_swap_block(asset)`. Same trust argument as `ReservedPoolSeeder` (D2): no extrinsic reaches them.
+- Storage version 1 → 2 on this branch, **no migration**: like the D8 submission, no chain the branch targets has a v1 pool; the fork (`feature/solver-marketplace`, at its own v2) carries a migration that gives existing `PoolInfo`s `treasury_bps = 0`. **Pools that graduated before D9 keep zero treasury routing**, the same per-launch immutability D4 applied to DLNCH.
 
 ### 7.2 `pallets/launchpad` — L-changes
 
@@ -370,7 +375,8 @@ type TreasurySink: TreasurySink<…>;   // runtime: LaunchTreasury on testnet, (
 - `pool_fee_tier` bound: `matches!(p.pool_fee_tier, 3 | 10)`.
 - New in-runtime method `buy_for(who, launch_id, quote_in) -> Result<Balance>`: `do_buy` for a pallet caller. It is the same path a user's `buy` takes — anti-snipe hook included — so a retirement's curve slices are ordinary buys that can graduate the launch (§2.4.3).
 - `Config::Treasury` is rebound from `Get<AccountId>` to the same `TreasurySink` trait; the launchpad's *protocol* destination (`DexProtocolFeeRecipient`) is unchanged.
-- Storage version bump and fork-only migration for `Launches` (new `CurveParams` field = 0 for existing launches — they graduated under the terms in force) and `Curves` (`last_trade_block = created_at`).
+- Storage version 0 → 1 on this branch, no migration (as above); the fork's migration gives existing `CurveParams` `treasury_share_bps = 0` — they were created under the terms in force — and `Curves` `treasury_fees_paid = 0`, `last_trade_block = created_at`.
+- `do_buy` returns `(crossed, tokens_out)` so `buy_for` can report what the buyer received.
 
 ### 7.3 Traits, direction, and no cycles
 
@@ -382,7 +388,7 @@ DEX → treasury and launchpad → treasury both go through `TreasurySink`, boun
 LaunchTreasury: pallet_launch_treasury = 59,   // 58 is TechnicalCommitteeTreasury
 ```
 
-`TreasuryManageOrigin = LaunchManageOrigin`'s type; `EnergyExchange = EnergyBroker`; `Staking` = `Self` (via the `Config` supertrait); `Dex = VitreusDex`; `Launchpad = Launchpad`; `NativeAsset`, `LnrgAsset = LNRG`; `DefaultTerms` as §5.1; `DefaultTargets` = empty (governance sets after the validators opt in). `on_runtime_upgrade` funds the vault with `ExistentialDeposit` from `xcm_config::TreasuryAccount` if the vault has no provider — one transfer, once — so the reputation clock starts at the upgrade block (§2.2). DEX: `TreasurySink = LaunchTreasury`; launchpad: `Treasury = LaunchTreasury`. Mainnet: neither pallet is wired; `TreasurySink = ()` returns `None`/no-op.
+`TreasuryManageOrigin = EnsureRoot` (as `LaunchManageOrigin`); `Exchange = EnergyBroker` (its `Swap` + `QuotePrice`); `BrokerAccount = EnergyBroker::account_id()`; `Staking = EnergyGenerationStaking`, an adapter in the runtime that implements `pallet_launch_treasury::TreasuryStaking` by reading `Bonded`/`Ledger`/`Cooperators`/`Validators`/`MinCooperatorBond`/`CurrentEra` and dispatching `bond` (controller = payee = vault), `bond_extra`, `cooperate`, `chill`, `unbond`, `withdraw_unbonded` with `RawOrigin::Signed(vault)`; `is_cooperable` is what `cooperate` checks of a target (`Validators` membership, `collaborative`, `is_legit_for_collab`); `LnrgAsset = WithId(LNRG)`; `DefaultTerms` as §5.1; `Targets` starts empty (governance sets after the validators opt in). `migrations::Unreleased` carries `FundLaunchTreasuryVault`: `ExistentialDeposit` from `xcm_config::TreasuryAccount` to the vault if it has no provider — one transfer, once — so the reputation clock starts at the upgrade block (§2.2). DEX: `TreasurySink = LaunchTreasury`; launchpad: `CurveTreasurySink = LaunchTreasury` (named apart from the DEX's, which is a supertrait of the launchpad's `Config`). Mainnet: none of the three pallets is wired.
 
 Weights: `stake` = `bond_extra` + `cooperate(K)` + this pallet's writes, `K = MaxTreasuryTargets`; `compound` = broker `do_swap` + DEX `do_swap` + `burn_from` + writes; `retire` = `unbond`; `finalize_retirement` = `withdraw_unbonded(SPECULATIVE_NUM_SPANS)`. Each is a sum of already-benchmarked calls plus O(1); bench the O(1) part and add.
 
@@ -431,7 +437,9 @@ Slashes apply `SlashDeferDuration = 36` eras (6 days) after the offence, and unt
 
 *Failure-mode:* `fm_t1_slice_never_exceeds_impact_cap`, `fm_t2_stake_before_reputation_keeps_bond_and_retries`, `fm_t3_retarget_filters_chilled_and_noncollab`, `fm_t4_dry_broker_keeps_lnrg_accrued`, `fm_t6_slash_devalues_every_launch_equally`, `fm_t7_no_more_chunks_is_retryable`, `fm_t8_last_retire_chills_first_and_next_stake_recooperates`, `fm_t11_retirement_can_graduate_a_curve`, `i_t7_cooperation_matches_active_after_every_bond_change`.
 
-*Invariant/lifecycle:* `t_l1_fee_to_pending_to_shares_at_price`, `t_l2_harvest_attributes_by_shares_not_by_time`, `t_l3_compound_burns_everything_it_buys`, `t_l4_retire_requires_dormancy_and_is_one_way`, `t_l5_finalize_credits_every_matured_launch_exactly`, `t_l6_snapshotted_terms_survive_set_terms`, `t_l7_i_t1_conservation_under_random_ops` (property-style), `t_g1_no_origin_can_withdraw`, `t_g2_set_targets_recooperates_without_touching_shares`, `t_g3_mainnet_sink_folds_into_protocol`.
+*Invariant/lifecycle:* `t_l1_fee_to_pending_to_shares_at_price`, `t_l2_harvest_attributes_by_shares_not_by_time` (including a re-stake that must neither lose nor mint yield), `t_l3_compound_burns_everything_it_buys`, `t_l4_retire_requires_dormancy_and_is_one_way`, `t_l5_finalize_credits_every_matured_launch_exactly`, `t_l5b_finalize_prorates_a_slash_across_matured_launches` (two launches in one merged chunk), `t_l6_snapshotted_terms_survive_set_terms`, `t_l7_i_t1_conservation_under_random_ops` (400 random operations, `try_state` after each), `t_g1_no_origin_can_withdraw`, `t_g2_set_targets_recooperates_without_touching_shares`, `t_g3_retired_launch_slice_folds_into_protocol`, `stake_refuses_when_the_vault_is_fully_slashed`.
+
+*Red-then-green, in the pallet's own suite:* each of these was made to fail by removing the rule it guards and confirmed to pass with it — settle before a share change (`t_l2`), burn after the buy (`t_l3`), pro-rata credit (`t_l5b`), the impact cap (`fm_t1`), chill before the last unbond (`fm_t8`), the dormancy check (`t_l4`), a retired launch receiving nothing (four tests), the insolvency guard, and measured-not-assumed spend (`fm_t11`). Two of the green runs found real bugs first: the venue buy's own routed slice was being overwritten by the record `compound` held, and a crossing curve buy's partial fill was being accounted at the offer. Both are §6.4 now.
 
 *DEX D9:* `d9_routing_is_tier_relative`, `d9_treasury_push_goes_to_vault_and_notes`, `d9_no_sink_folds_into_protocol`, `d9_migration_gives_existing_pools_zero_treasury`, `d9_last_swap_block_written`. *Launchpad:* `l1_three_way_split_floors_in_creator_favour_last`, `l2_buy_for_runs_the_hook_and_can_graduate`, `l3_tier_bound_is_3_or_10`.
 
@@ -444,3 +452,19 @@ Slashes apply `SlashDeferDuration = 36` eras (6 days) after the offence, and unt
 3. **An in-runtime staking trait.** Dispatching `energy-generation` calls as `Signed(vault)` couples this pallet to their argument shapes and re-runs `ensure_signed`. If the Foundation is open to it, a `trait PalletStaker { bond, bond_extra, cooperate, unbond, withdraw }` on `energy-generation` for in-runtime callers would be cleaner and would let the reputation check be applied deliberately rather than incidentally. Ask *after* v2 works with dispatch, with the working version as the argument.
 4. **Frontend.** Token and launch pages: treasury balance (pending, staked value, LNRG accrued, pending burn), last compound, cumulative burned, status, and the unclaimed-era warning. The indexer: `payout_stakers` keeper for the treasury's targets, and `stake`/`compound` pokes.
 5. **The §9 record in LAUNCHPAD_SPEC.** After this design is accepted, §9.2's two wrong facts (C1, C2) should be corrected in place with a pointer here; not done on this branch, since that file is under review in #100.
+
+---
+
+## 10. Where the implementation departs from the text above
+
+Recorded on the branch that implements it; each is small and none changes a decision in §2.
+
+1. **The fee slices are not in `TreasuryTerms`** (§5.1). They are governance parameters of the pallets that snapshot them — `treasury_bps` in the DEX's `DefaultFeeRouting`, `treasury_share_bps` in the launchpad's `Params` — so there is one place each is set and one place each is bounded. `TreasuryTerms` holds dormancy, min stake, impact cap, burn interval and bounty.
+2. **`dormancy_blocks` snapshots at first funding, not at `create_launch`** (§5.4). The launchpad does not call this pallet at create; the first fee that reaches the vault creates the record. Same effect for any launch that ever trades.
+3. **`retire` does not sell** (§6.5). It settles the LNRG claim into the record; `compound` sells, and works on a retiring or retired treasury. One code path for the sale.
+4. **The routing bound is `routed ≤ tier × 10`** (§7.1), i.e. a pool may route its whole tier, rather than `tier × 10 − 10`. D4's rationale was "the pool keeps ≥ 0", and a `create_pool` pool at tier 1 with today's 5-bps protocol slice needs the smaller reserve; the default is separately required to fit the protocol slice into tier 1 and all three into tier 3.
+5. **`LastSwapBlock` is a map beside `PoolInfo`**, not a field (§7.1); `last_trade_block` and `treasury_fees_paid` *are* fields of `CurveState` (§7.2), which only the launchpad and its page decode.
+6. **No migrations on this branch** (§7.1, §7.2): the branch is the upstream-shaped submission, where no chain has a pre-existing pool or launch. The fork carries them.
+7. **`min_out = 0` on the venue buy** (§6.4): a quote-derived minimum would be computed from state a same-block front-run has already moved; the impact cap is the protection.
+8. **Weights are composed, not benchmarked** (`weights.rs`): each call's weight is the sum of the `energy-generation` / broker / DEX calls it dispatches plus a margin. Benchmark before mainnet.
+9. **The staking and broker are mocked in the pallet's tests** (`mock.rs`), to the rules read from `energy-generation` and `energy-broker` at `423740e`, with the runtime adapter (`EnergyGenerationStaking`) exercised by the runtime build only. An integration test against the real `energy-generation` in the runtime's test module is the next verification step; until then the mock's rule list in its header is the contract.
