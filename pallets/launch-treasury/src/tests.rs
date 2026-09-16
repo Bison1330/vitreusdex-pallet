@@ -248,12 +248,14 @@ fn t_l3_compound_burns_everything_it_buys() {
         assert!(50 * UNIT - lnrg_sold < 100 && lnrg_sold > 0);
         assert_eq!(vtrs_realised, lnrg_sold * 990 / 1000);
         assert_eq!(lnrg(vault()), vault_lnrg - lnrg_sold);
-        // The keeper got exactly the bounty, nothing else left the vault to a person.
-        assert_eq!(bounty, vtrs_realised * BOUNTY_BPS as u128 / BPS as u128);
+        // The keeper got exactly the bounty — the rate on the sale and on the
+        // slice — and nothing else left the vault to a person.
+        let sale_bounty = vtrs_realised * BOUNTY_BPS as u128 / BPS as u128;
+        assert_eq!(bounty, sale_bounty + vtrs_burned_in * BOUNTY_BPS as u128 / BPS as u128);
         assert_eq!(vtrs(KEEPER), keeper_vtrs + bounty);
         // One slice, capped, bought and burned in full (I-T6).
         assert!(vtrs_burned_in <= cap && vtrs_burned_in > 0);
-        assert_eq!(vtrs_burned_in, (vtrs_realised - bounty).min(cap));
+        assert_eq!(vtrs_burned_in, (vtrs_realised - sale_bounty).min(cap));
         assert!(tokens_burned > 0);
         assert_eq!(tok(a, vault()), 0);
         assert_eq!(Assets::total_supply(asset(a)), supply_before - tokens_burned);
@@ -272,10 +274,59 @@ fn t_l3_compound_burns_everything_it_buys() {
         run_to(now() + BURN_INTERVAL);
         let before = treasury(a).pending_burn;
         assert_ok!(compound(a));
-        let Event::Compounded { lnrg_sold, vtrs_burned_in, .. } = last_event() else { panic!("Compounded") };
+        let Event::Compounded { lnrg_sold, bounty, vtrs_burned_in, .. } = last_event() else { panic!("Compounded") };
         assert_eq!(lnrg_sold, 0);
-        assert!(vtrs_burned_in > 0 && treasury(a).pending_burn == before - vtrs_burned_in);
+        assert!(vtrs_burned_in > 0 && treasury(a).pending_burn == before - vtrs_burned_in - bounty);
         assert_eq!(tok(a, vault()), 0);
+        ok_state();
+    });
+}
+
+/// §6.4: a burn slice pays the caller the same bounty a sale does, from
+/// `pending_burn`. A retired launch's principal is burned over many
+/// slices with nothing to sell, so without this the keeper that closes it
+/// is unpaid for every one of them.
+#[test]
+fn t_l9_burn_slice_pays_the_keeper() {
+    new_test_ext().execute_with(|| {
+        let a = graduated_with_volume(ALICE, 10);
+        assert_ok!(stake(a));
+        run_to(now() + DORMANCY);
+        assert_ok!(retire(a));
+        MockStaking::set_era(10 + BONDING_DURATION);
+        assert_ok!(finalize(a));
+        let principal = treasury(a).pending_burn;
+        assert!(principal > 0);
+        // A tight impact cap: the principal takes several slices.
+        let mut terms = Terms::<Test>::get();
+        terms.max_burn_impact_bps = 10;
+        assert_ok!(LaunchTreasury::set_terms(RuntimeOrigin::root(), terms));
+
+        run_to(now() + BURN_INTERVAL);
+        let keeper_before = vtrs(KEEPER);
+        assert_ok!(compound(a));
+        let Event::Compounded { lnrg_sold, vtrs_realised, bounty, vtrs_burned_in, .. } = last_event() else { panic!("Compounded, got {:?}", last_event()) };
+        assert_eq!((lnrg_sold, vtrs_realised), (0, 0), "nothing to sell: the bounty is the slice's");
+        assert!(vtrs_burned_in > 0 && vtrs_burned_in < principal, "one slice of several");
+        assert_eq!(bounty, vtrs_burned_in * BOUNTY_BPS as u128 / BPS as u128);
+        assert!(bounty >= ED, "the slice is large enough to pay");
+        assert_eq!(vtrs(KEEPER), keeper_before + bounty);
+        assert_eq!(treasury(a).pending_burn, principal - vtrs_burned_in - bounty);
+        ok_state();
+
+        // Every slice pays until the principal is gone, at the rate and no
+        // more; the record still closes.
+        let mut slices = 1;
+        while Treasuries::<Test>::get(a).is_some() && slices < 10_000 {
+            run_to(now() + BURN_INTERVAL);
+            assert_ok!(compound(a));
+            slices += 1;
+        }
+        assert!(Treasuries::<Test>::get(a).is_none(), "closed");
+        assert!(slices > 2, "several slices");
+        let paid = vtrs(KEEPER) - keeper_before;
+        assert!(paid > bounty, "more than one slice paid");
+        assert!(paid <= principal * BOUNTY_BPS as u128 / BPS as u128, "never above the rate on the principal");
         ok_state();
     });
 }

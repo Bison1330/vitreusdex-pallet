@@ -683,6 +683,24 @@ pub mod pallet {
                     burned_in = spent;
                     tokens_burned = tokens;
                     did_something = true;
+                    // The slice pays its caller as the sale does — the same
+                    // rate on what was burned, from `pending_burn`, above
+                    // ED or not at all. A retired launch's principal goes
+                    // out over many slices with nothing to sell, and the
+                    // keeper that runs them is paid for each (§6.4).
+                    let slice_bounty = Self::mul_div(spent, (terms.keeper_bounty_bps as u128).into(), (BPS as u128).into())?;
+                    let ed = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::minimum_balance(Self::native());
+                    if slice_bounty >= ed && slice_bounty <= t.pending_burn {
+                        <<T as pallet_vitreus_dex::Config>::Assets as FungiblesMutate<T::AccountId>>::transfer(
+                            Self::native(),
+                            &vault,
+                            caller,
+                            slice_bounty,
+                            Preserve,
+                        )?;
+                        t.pending_burn = t.pending_burn.saturating_sub(slice_bounty);
+                        bounty = bounty.saturating_add(slice_bounty);
+                    }
                 }
             }
 
