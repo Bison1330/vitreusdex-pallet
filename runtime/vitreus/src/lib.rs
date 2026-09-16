@@ -1517,7 +1517,10 @@ pub mod testnet_pallets {
         fn on_runtime_upgrade() -> Weight {
             let vault = LaunchTreasury::vault();
             if frame_system::Pallet::<Runtime>::providers(&vault) > 0 {
-                return <Runtime as frame_system::Config>::DbWeight::get().reads(1);
+                // Already holds at least its ED: nothing for the first fee
+                // to withhold (`VaultFunded`, pallet §9.6).
+                pallet_launch_treasury::VaultFunded::<Runtime>::put(true);
+                return <Runtime as frame_system::Config>::DbWeight::get().reads_writes(1, 1);
             }
             let ed = <Runtime as pallet_balances::Config>::ExistentialDeposit::get();
             let res = <Balances as frame_support::traits::fungible::Mutate<AccountId>>::transfer(
@@ -1527,7 +1530,10 @@ pub mod testnet_pallets {
                 frame_support::traits::tokens::Preservation::Preserve,
             );
             log::info!(target: "runtime::launch-treasury", "vault funded: {:?}", res.map(|_| ()));
-            <Runtime as frame_system::Config>::DbWeight::get().reads_writes(3, 3)
+            if res.is_ok() {
+                pallet_launch_treasury::VaultFunded::<Runtime>::put(true);
+            }
+            <Runtime as frame_system::Config>::DbWeight::get().reads_writes(3, 4)
         }
     }
 }

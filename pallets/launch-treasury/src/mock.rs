@@ -15,6 +15,11 @@
 //! - `MockBroker` — the energy broker's `LNRG → VTRS` path at a fixed rate
 //!   with a 1 % fee, paying from `BROKER`'s VTRS and burning the LNRG.
 //!   `InsufficientLiquidity` when `BROKER` is short, like the real one.
+//!
+//! `new_test_ext` is the upgrade path (the vault holds its ED and
+//! `VaultFunded` is set, as `FundLaunchTreasuryVault` leaves it);
+//! `new_test_ext_from_genesis` is the chain that ships the pallet at genesis
+//! (§9.6: nothing funds the vault, the first fee creates it).
 
 use super::*;
 use crate as pallet_launch_treasury;
@@ -592,24 +597,34 @@ pub fn pay_rewards(amount: u128) {
     Assets::mint_into(LNRG_ID, &vault(), amount).unwrap();
 }
 
+/// The upgrade path (§4, §7.4): `FundLaunchTreasuryVault` gave the vault
+/// its ED and set `VaultFunded` before any fee reached it.
 pub fn new_test_ext() -> sp_io::TestExternalities {
+    build_ext(true)
+}
+
+/// The from-genesis path (§9.6, §10.11): no migration ran, so nothing
+/// funds the vault and the first fee creates it.
+pub fn new_test_ext_from_genesis() -> sp_io::TestExternalities {
+    build_ext(false)
+}
+
+fn build_ext(vault_funded: bool) -> sp_io::TestExternalities {
     let mut t = frame_system::GenesisConfig::<Test>::default().build_storage().unwrap();
-    pallet_balances::GenesisConfig::<Test> {
-        balances: vec![
-            (ALICE, RICH),
-            (BOB, RICH),
-            (CHARLIE, RICH),
-            (KEEPER, UNIT),
-            (TREASURY, ED),
-            (EXCESS, ED),
-            // The broker holds the gas market's VTRS float (§3.2).
-            (BROKER, 1_000_000 * UNIT),
-            // The vault exists from the upgrade block (§4): its ED.
-            (vault(), ED),
-        ],
+    let mut balances = vec![
+        (ALICE, RICH),
+        (BOB, RICH),
+        (CHARLIE, RICH),
+        (KEEPER, UNIT),
+        (TREASURY, ED),
+        (EXCESS, ED),
+        // The broker holds the gas market's VTRS float (§3.2).
+        (BROKER, 1_000_000 * UNIT),
+    ];
+    if vault_funded {
+        balances.push((vault(), ED));
     }
-    .assimilate_storage(&mut t)
-    .unwrap();
+    pallet_balances::GenesisConfig::<Test> { balances }.assimilate_storage(&mut t).unwrap();
     pallet_assets::GenesisConfig::<Test> {
         assets: vec![(VNRG_ID, ALICE, false, 1), (LNRG_ID, ALICE, false, 1)],
         metadata: vec![(VNRG_ID, b"VNRG".to_vec(), b"VNRG".to_vec(), 18), (LNRG_ID, b"LNRG".to_vec(), b"LNRG".to_vec(), 18)],
@@ -633,6 +648,9 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
             m.insert(VAL_C, true);
         });
         RATE.with(|r| *r.borrow_mut() = (1, 1));
+        if vault_funded {
+            VaultFunded::<Test>::put(true);
+        }
         // Spec §2.6 pool split: 5 protocol / 5 creator / 10 treasury / 10 pool.
         frame_support::assert_ok!(VitreusDex::set_default_fee_routing(RuntimeOrigin::root(), 5, 5, 10));
         frame_support::assert_ok!(LaunchTreasury::set_targets(RuntimeOrigin::root(), vec![VAL_A, VAL_B]));

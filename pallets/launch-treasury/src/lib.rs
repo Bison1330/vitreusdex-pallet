@@ -243,6 +243,14 @@ pub mod pallet {
     #[pallet::storage]
     pub type CooperationStale<T: Config> = StorageValue<_, bool, ValueQuery>;
 
+    /// Whether the vault holds its existential deposit above what the
+    /// records account for (§4, I-T1). Set by the upgrade that funds the
+    /// vault (§7.4) or, on a chain that ships the pallet at genesis and
+    /// runs no such upgrade, by the first fee, which withholds the ED
+    /// itself (§9.6).
+    #[pallet::storage]
+    pub type VaultFunded<T: Config> = StorageValue<_, bool, ValueQuery>;
+
     /// Retiring launches in unbond order: `(launch, chunk era, amount)`.
     /// `withdraw_unbonded` releases every matured chunk at once, so
     /// `finalize_retirement` credits from this record, not from chunk
@@ -911,6 +919,17 @@ pub mod pallet {
         fn note_fee(asset: &AssetKindOf<T>, amount: BalanceOf<T>) {
             let Some(launch_id) = Self::launch_of(asset) else { return };
             let now = frame_system::Pallet::<T>::block_number();
+            // No upgrade funded the vault: this fee created it (the
+            // transfer needed `amount ≥ ED` to), and its ED is the buffer
+            // §4 assumes and I-T1 counts. Withhold it once, here; it is
+            // never `pending` and outlives every launch (§9.6).
+            let amount = if VaultFunded::<T>::get() {
+                amount
+            } else {
+                VaultFunded::<T>::put(true);
+                let ed = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::minimum_balance(Self::native());
+                amount.saturating_sub(ed)
+            };
             Treasuries::<T>::mutate(launch_id, |maybe| {
                 let t = maybe.get_or_insert_with(|| TreasuryRecord {
                     pending: Zero::zero(),

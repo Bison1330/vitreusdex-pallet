@@ -383,6 +383,51 @@ fn t_l5_finalize_credits_every_matured_launch_exactly() {
     });
 }
 
+/// §9.6 / §10.11: a chain that ships the pallet at genesis runs no
+/// `FundLaunchTreasuryVault`; the first fee creates the vault, and without
+/// the ED buffer of §4 every unit it holds is accounted. The last retirement
+/// slice then has to spend the vault's final unit while a consumer
+/// reference keeps the account alive — here a late `payout_stakers` for an
+/// era the vault was still exposed in, which lands two eras after it
+/// unbonded — and Balances refuses with `Token(Frozen)`: the record can
+/// never close. The first fee must leave the ED behind.
+#[test]
+fn t_l8_from_genesis_first_fee_withholds_ed_so_retirement_closes() {
+    new_test_ext_from_genesis().execute_with(|| {
+        assert_eq!(vtrs(vault()), 0, "no upgrade funded the vault");
+        let a = graduated_with_volume(ALICE, 10);
+        assert_ok!(stake(a));
+        run_to(now() + DORMANCY);
+        assert_ok!(retire(a));
+        MockStaking::set_era(10 + BONDING_DURATION);
+        assert_ok!(finalize(a));
+        assert_eq!(MockStaking::total(&vault()), 0, "ledger gone: no lock keeps the account alive");
+        assert_eq!(treasury(a).status, TreasuryStatus::Retired);
+
+        // A late payout for an era the vault was still exposed in.
+        pay_rewards(1);
+        assert_eq!(System::consumers(&vault()), 1, "the LNRG account is the consumer");
+
+        let mut slices = 0;
+        while Treasuries::<Test>::get(a).is_some() && slices < 10_000 {
+            run_to(now() + BURN_INTERVAL);
+            assert_ok!(compound(a));
+            slices += 1;
+        }
+        assert!(Treasuries::<Test>::get(a).is_none(), "closed");
+        assert_eq!(vtrs(vault()), ED, "the first fee's ED outlives the launch");
+        assert!(VaultFunded::<Test>::get());
+        ok_state();
+
+        // The next launch's first fee is not the first fee: nothing withheld.
+        let b = create(BOB);
+        let v0 = vtrs(vault());
+        buy(CHARLIE, b, 50 * UNIT);
+        assert_eq!(vtrs(vault()) - v0, treasury(b).pending);
+        ok_state();
+    });
+}
+
 #[test]
 fn t_l6_snapshotted_terms_survive_set_terms() {
     new_test_ext().execute_with(|| {
