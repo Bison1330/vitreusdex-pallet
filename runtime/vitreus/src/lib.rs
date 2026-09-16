@@ -1507,6 +1507,79 @@ pub mod testnet_pallets {
         type MaxUnlockingChunks = MaxUnlockingChunks;
         type DefaultTerms = LaunchTreasuryDefaultTerms;
         type WeightInfo = pallet_launch_treasury::weights::SubstrateWeight<Runtime>;
+        #[cfg(feature = "runtime-benchmarks")]
+        type BenchmarkHelper = LaunchTreasuryBenchmarkHelper;
+    }
+
+    /// What the treasury benchmarks need of `energy-generation`,
+    /// `pallet-reputation` and `pallet-dynamic-energy`: validators the vault
+    /// may cooperate with, the cooperator's own reputation, an era clock they
+    /// can move, and an LNRG rate to quote against.
+    #[cfg(feature = "runtime-benchmarks")]
+    pub struct LaunchTreasuryBenchmarkHelper;
+    #[cfg(feature = "runtime-benchmarks")]
+    impl pallet_launch_treasury::BenchmarkHelper<AccountId> for LaunchTreasuryBenchmarkHelper {
+        fn cooperable_validator(i: u32) -> AccountId {
+            use frame_support::traits::fungible::Mutate as _;
+            use pallet_energy_generation::{RewardDestination, ValidatorPrefs};
+            let who: AccountId = frame_benchmarking::account("treasury-target", i, 0);
+            if pallet_energy_generation::Validators::<Runtime>::contains_key(&who) {
+                return who;
+            }
+            // Bond the larger validator minimum, whatever NAC level the
+            // account is given, with the same again free for fees.
+            let bond = pallet_energy_generation::MinCommonValidatorBond::<Runtime>::get()
+                .max(pallet_energy_generation::MinTrustValidatorBond::<Runtime>::get())
+                .max(UNITS);
+            Balances::set_balance(&who, bond.saturating_mul(2));
+            // Above both the validator and the collaborative tier, whatever
+            // `OnNewAccount` granted.
+            Reputation::force_set_points(
+                frame_system::RawOrigin::Root.into(),
+                who.clone(),
+                pallet_reputation::ReputationPoint::from(ReputationTier::Trailblazer(1)),
+            )
+            .expect("root sets reputation");
+            EnergyGeneration::bond(
+                frame_system::RawOrigin::Signed(who.clone()).into(),
+                who.clone(),
+                bond,
+                RewardDestination::Stash,
+            )
+            .expect("bond validator");
+            EnergyGeneration::validate(
+                frame_system::RawOrigin::Signed(who.clone()).into(),
+                ValidatorPrefs { commission: Perbill::zero(), collaborative: true, ..Default::default() },
+            )
+            .expect("validate");
+            assert!(Self::is_cooperable(&who), "benchmark validator passes the pre-flight filter");
+            who
+        }
+        fn clear_cooperator_gate(vault: &AccountId) {
+            // `validate` pins every validator's `min_coop_reputation` at
+            // Vanguard(1); give the vault the same tier again explicitly.
+            Reputation::force_set_points(
+                frame_system::RawOrigin::Root.into(),
+                vault.clone(),
+                pallet_reputation::ReputationPoint::from(ReputationTier::Vanguard(1)),
+            )
+            .expect("root sets reputation");
+        }
+        fn set_current_era(era: u32) {
+            pallet_energy_generation::CurrentEra::<Runtime>::put(era);
+        }
+        fn prepare_exchange() {
+            // `DynamicEnergy::ExchangeRate` is `None` until the first session
+            // change computes it from the genesis overrides; run that hook.
+            <DynamicEnergy as vitreus_runtime_common::OnSessionChange>::on_new_session(1);
+            assert!(DynamicEnergy::exchange_rate().is_some(), "benchmark genesis yields an LNRG rate");
+        }
+    }
+    #[cfg(feature = "runtime-benchmarks")]
+    impl LaunchTreasuryBenchmarkHelper {
+        fn is_cooperable(v: &AccountId) -> bool {
+            <EnergyGenerationStaking as TreasuryStaking<AccountId, Balance>>::is_cooperable(v)
+        }
     }
 
     /// Funds the vault with its existential deposit once, from the
@@ -2663,6 +2736,7 @@ mod benches {
         [pallet_treasury_extension, TreasuryExtension]
         [pallet_vitreus_dex, VitreusDex]
         [pallet_launchpad, Launchpad]
+        [pallet_launch_treasury, LaunchTreasury]
     );
 }
 

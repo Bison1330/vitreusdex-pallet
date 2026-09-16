@@ -37,6 +37,10 @@ pub use weights::WeightInfo;
 mod mock;
 #[cfg(test)]
 mod tests;
+#[cfg(feature = "runtime-benchmarks")]
+pub mod benchmarking;
+#[cfg(feature = "runtime-benchmarks")]
+pub use benchmarking::BenchmarkHelper;
 
 use frame_support::{
     dispatch::DispatchResult,
@@ -207,6 +211,12 @@ pub mod pallet {
         type DefaultTerms: Get<TreasuryTerms<BalanceOf<Self>, BlockNumberFor<Self>>>;
 
         type WeightInfo: WeightInfo;
+
+        /// Staking-side setup the benchmarks cannot reach through
+        /// [`TreasuryStaking`]: cooperable validators, the cooperator gate,
+        /// the era clock, the exchange rate.
+        #[cfg(feature = "runtime-benchmarks")]
+        type BenchmarkHelper: BenchmarkHelper<Self::AccountId>;
     }
 
     // ---- storage (§5) ---------------------------------------------------
@@ -380,7 +390,7 @@ pub mod pallet {
         /// Withdraw matured unbond chunks and credit every retiring launch
         /// whose era has passed (§6.6). Permissionless.
         #[pallet::call_index(5)]
-        #[pallet::weight(<T as Config>::WeightInfo::finalize_retirement())]
+        #[pallet::weight(<T as Config>::WeightInfo::finalize_retirement(T::MaxUnlockingChunks::get()))]
         pub fn finalize_retirement(origin: OriginFor<T>, launch_id: LaunchId) -> DispatchResult {
             ensure_signed(origin)?;
             Self::do_finalize(launch_id)

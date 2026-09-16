@@ -301,6 +301,11 @@ pub fn err(s: &'static str) -> DispatchError {
     DispatchError::Other(s)
 }
 
+/// `a × b / c` without the u128 overflow a full vault's stake would hit.
+fn mul_div(a: u128, b: u128, c: u128) -> u128 {
+    u128::try_from(U256::from(a) * U256::from(b) / U256::from(c)).expect("fits: result ≤ a")
+}
+
 pub struct MockStaking;
 impl MockStaking {
     fn with<R>(f: impl FnOnce(&mut BTreeMap<Acc, Ledger>) -> R) -> R {
@@ -334,7 +339,7 @@ impl MockStaking {
                 let old: u128 = l.targets.iter().map(|(_, s)| s).sum();
                 if old > 0 && total < old {
                     for t in l.targets.iter_mut() {
-                        t.1 = t.1 * total / old;
+                        t.1 = mul_div(t.1, total, old);
                     }
                 }
                 Self::relock(stash, l);
@@ -467,7 +472,7 @@ impl TreasuryStaking<Acc, u128> for MockStaking {
         let old: u128 = l.targets.iter().map(|(_, s)| s).sum();
         if old > l.active && old > 0 {
             for t in l.targets.iter_mut() {
-                t.1 = t.1 * l.active / old;
+                t.1 = mul_div(t.1, l.active, old);
             }
         }
         Self::relock(stash, &l);
@@ -584,6 +589,26 @@ impl pallet_launch_treasury::Config for Test {
     type MaxUnlockingChunks = ConstU32<MAX_CHUNKS>;
     type DefaultTerms = DefaultTerms;
     type WeightInfo = ();
+    #[cfg(feature = "runtime-benchmarks")]
+    type BenchmarkHelper = MockBenchmarkHelper;
+}
+
+#[cfg(feature = "runtime-benchmarks")]
+pub struct MockBenchmarkHelper;
+#[cfg(feature = "runtime-benchmarks")]
+impl pallet_launch_treasury::BenchmarkHelper<Acc> for MockBenchmarkHelper {
+    fn cooperable_validator(i: u32) -> Acc {
+        let v: Acc = frame_benchmarking::account("validator", i, 0);
+        MockStaking::set_validator(v.clone(), true);
+        v
+    }
+    fn clear_cooperator_gate(_vault: &Acc) {
+        REPUTATION_OK.with(|r| *r.borrow_mut() = true);
+    }
+    fn set_current_era(era: u32) {
+        MockStaking::set_era(era);
+    }
+    fn prepare_exchange() {}
 }
 
 pub const RICH: u128 = 1_000_000_000 * UNIT;
