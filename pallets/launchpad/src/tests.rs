@@ -100,7 +100,7 @@ fn dex_err(e: pallet_vitreus_dex::Error<Test>) -> DispatchError {
 fn set_params(t: u128, fee: u16, share: u16) {
     assert_ok!(Launchpad::set_params(
         RuntimeOrigin::root(),
-        LaunchParams { graduation_target: t, curve_fee_bps: fee, protocol_share_bps: share, pool_fee_tier: 3, creation_fee: CREATION_FEE }
+        LaunchParams { graduation_target: t, curve_fee_bps: fee, protocol_share_bps: share, treasury_share_bps: 0, pool_fee_tier: 3, creation_fee: CREATION_FEE }
     ));
 }
 
@@ -887,7 +887,13 @@ fn fm10_params_bounds() {
         assert_ok!(try_set(LaunchParams { protocol_share_bps: 5_000, ..ok.clone() }));
         assert_noop!(try_set(LaunchParams { protocol_share_bps: 10_001, .. ok.clone() }), oob());
         assert_ok!(try_set(LaunchParams { protocol_share_bps: 10_000, ..ok.clone() }));
+        // L1: the bound is on protocol + treasury (the non-creator share).
+        assert_ok!(try_set(LaunchParams { protocol_share_bps: 2_500, treasury_share_bps: 2_500, ..ok.clone() }));
+        assert_noop!(try_set(LaunchParams { protocol_share_bps: 2_500, treasury_share_bps: 2_499, ..ok.clone() }), oob());
+        assert_noop!(try_set(LaunchParams { protocol_share_bps: 5_000, treasury_share_bps: 5_001, ..ok.clone() }), oob());
         assert_noop!(try_set(LaunchParams { pool_fee_tier: 2, .. ok.clone() }), oob());
+        // L1: tier 1 cannot carry the three routed slices (D9); launch pools are 3 or 10.
+        assert_noop!(try_set(LaunchParams { pool_fee_tier: 1, .. ok.clone() }), oob());
         assert_ok!(try_set(LaunchParams { pool_fee_tier: 10, ..ok.clone() }));
         let min_fee = MinCreationFee::get();
         assert_noop!(try_set(LaunchParams { creation_fee: min_fee - 1, .. ok.clone() }), oob());
@@ -1231,13 +1237,13 @@ fn d4_graduated_pool_routes_fees_and_the_launch_recipient_claims_them() {
     use pallet_vitreus_dex::{CreatorFeesUnclaimed, FeeRouting, ProtocolFeesUnclaimed};
 
     new_test_ext().execute_with(|| {
-        assert_ok!(VitreusDex::set_default_fee_routing(RuntimeOrigin::root(), 5, 5));
+        assert_ok!(VitreusDex::set_default_fee_routing(RuntimeOrigin::root(), 5, 5, 0));
         let id = create(ALICE);
         cross(BOB, id);
         assert_eq!(state(id).phase, Phase::Graduated);
         assert_eq!(
             Pools::<Test>::get(pair(id)).unwrap().routing,
-            FeeRouting { protocol_bps: 5, creator_bps: 5 },
+            FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 0 },
             "the seed snapshots the split in force at graduation"
         );
 
@@ -1387,4 +1393,128 @@ fn metadata_fields_are_bounded() {
         telegram: Uri::try_from(vec![b't'; 4]).unwrap(),
     };
     assert_eq!(m.dims(), (7, 5));
+}
+
+// ===========================================================================
+// L — the launch treasury's leg on the curve (LAUNCH_TREASURY_SPEC §7.2).
+// ===========================================================================
+
+use crate::mock::{RecordingSink as _, SINK_NOTED, SINK_VAULT, VAULT};
+
+fn set_params3(share: u16, treasury_share: u16) {
+    assert_ok!(Launchpad::set_params(
+        RuntimeOrigin::root(),
+        LaunchParams { graduation_target: T_DEFAULT, curve_fee_bps: 100, protocol_share_bps: share, treasury_share_bps: treasury_share, pool_fee_tier: 3, creation_fee: CREATION_FEE }
+    ));
+}
+
+#[test]
+fn l1_three_way_split_floors_in_creator_favour_last() {
+    new_test_ext().execute_with(|| {
+        // 25 / 25 / 50: protocol and treasury floor, creator takes the remainder.
+        SINK_VAULT.with(|v| *v.borrow_mut() = Some(VAULT));
+        set_params3(2_500, 2_500);
+        let id = create(ALICE);
+        assert_eq!(launch(id).curve.treasury_share_bps, 2_500, "snapshotted at create");
+        let (t0, v0, esc) = (vtrs(TREASURY), vtrs(VAULT), launch(id).escrow.clone());
+        let esc0 = vtrs(&esc);
+
+        // A buy whose fee is not divisible by four, so the floors matter.
+        System::set_block_number(5);
+        let q = 10 * UNIT + 3;
+        buy(BOB, id, q);
+        let s = state(id);
+        // The fee as the curve charged it (its own rounding); the split is what is under test.
+        let fee = System::events()
+            .iter()
+            .rev()
+            .find_map(|r| match &r.event {
+                RuntimeEvent::Launchpad(Event::Bought { fee, .. }) => Some(*fee),
+                _ => None,
+            })
+            .unwrap();
+        assert!(fee % 4 != 0, "pick a quote whose fee does not divide evenly");
+        let protocol = fee * 2_500 / 10_000;
+        let treasury = fee * 2_500 / 10_000;
+        let creator = fee - protocol - treasury;
+        assert_eq!(vtrs(TREASURY) - t0, protocol);
+        assert_eq!(vtrs(VAULT) - v0, treasury);
+        assert_eq!(s.protocol_fees_paid, protocol);
+        assert_eq!(s.treasury_fees_paid, treasury);
+        assert_eq!(s.creator_fees_unclaimed, creator);
+        assert_eq!(SINK_NOTED.with(|n| n.borrow().clone()), vec![(launch(id).asset_id, treasury)]);
+        assert_eq!(s.last_trade_block, 5);
+        // I1 still holds: what left the escrow is exactly protocol + treasury.
+        assert_eq!(vtrs(&esc) - esc0, s.real_quote + s.creator_fees_unclaimed);
+
+        // A sell pays the same three ways and stamps the block.
+        System::set_block_number(9);
+        let (t1, v1) = (vtrs(TREASURY), vtrs(VAULT));
+        sell(BOB, id, tok(id, BOB) / 2);
+        let s = state(id);
+        assert!(vtrs(TREASURY) > t1 && vtrs(VAULT) > v1);
+        assert_eq!(s.last_trade_block, 9);
+        assert_eq!(SINK_NOTED.with(|n| n.borrow().len()), 2);
+        check_invariants(id, &[ALICE, BOB]);
+    });
+}
+
+#[test]
+fn l1_no_sink_folds_treasury_share_into_protocol() {
+    new_test_ext().execute_with(|| {
+        SINK_VAULT.with(|v| *v.borrow_mut() = None);
+        set_params3(2_500, 2_500);
+        let id = create(ALICE);
+        let t0 = vtrs(TREASURY);
+        let q = 10 * UNIT;
+        buy(BOB, id, q);
+        let fee = q * 100 / 10_000;
+        let s = state(id);
+        assert_eq!(vtrs(TREASURY) - t0, fee / 2, "protocol + treasury, both to the protocol recipient");
+        assert_eq!(s.protocol_fees_paid, fee / 2);
+        assert_eq!(s.treasury_fees_paid, 0);
+        assert_eq!(vtrs(VAULT), ED);
+        assert!(SINK_NOTED.with(|n| n.borrow().is_empty()));
+    });
+}
+
+#[test]
+fn l2_buy_for_runs_the_hook_and_can_graduate() {
+    new_test_ext().execute_with(|| {
+        use crate::CurveVenue;
+        type Venue = Launchpad;
+        let id = create(ALICE);
+        let asset = launch(id).asset_id;
+        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::launch_of_asset(asset), Some(id));
+        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::asset_of(id), Some(asset));
+        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::phase(id), Some(Phase::Trading));
+        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::last_trade_block(id), Some(1), "created_at until the first trade");
+        let t = terms(id);
+        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::virtual_reserves(id), Some((t.virtual_quote, t.token_floor + SELLABLE)));
+
+        // An in-runtime buy is an ordinary buy: the hook saw it, the buyer got the tokens.
+        System::set_block_number(3);
+        let before = HOOK_CALLS.with(|c| c.borrow().len());
+        let got = <Venue as CurveVenue<Acc, u128, u128, u64>>::buy_for(&BOB, id, 10 * UNIT, 0).unwrap();
+        assert_eq!(tok(id, BOB), got);
+        assert!(got > 0);
+        assert_eq!(HOOK_CALLS.with(|c| c.borrow().len()), before + 1);
+        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::last_trade_block(id), Some(3));
+        // Slippage binds like the extrinsic's.
+        assert_noop!(
+            <Venue as CurveVenue<Acc, u128, u128, u64>>::buy_for(&BOB, id, 10 * UNIT, u128::MAX / 4),
+            Error::<Test>::SlippageExceeded
+        );
+        // A big enough buy crosses and graduates (§2.4.3: a retirement can seed a dead curve).
+        let got = <Venue as CurveVenue<Acc, u128, u128, u64>>::buy_for(&BOB, id, 500_000_000 * UNIT, 0).unwrap();
+        assert!(got > 0);
+        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::phase(id), Some(Phase::Graduated));
+        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::virtual_reserves(id), None);
+        assert!(Pools::<Test>::contains_key(pair(id)));
+        // Nothing is quotable on a graduated curve.
+        assert_noop!(
+            <Venue as CurveVenue<Acc, u128, u128, u64>>::buy_for(&BOB, id, UNIT, 0),
+            Error::<Test>::WrongPhase
+        );
+    });
 }

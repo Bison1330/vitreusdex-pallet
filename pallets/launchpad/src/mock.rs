@@ -135,6 +135,29 @@ impl Contains<NativeOrAssetId> for ReservedAssets {
     }
 }
 
+/// L1: a recording treasury sink for the curve fee. `SINK_VAULT` is where a
+/// launch asset's treasury share goes (`None` = fold into protocol);
+/// `SINK_NOTED` is every `(asset id, amount)` the launchpad reported.
+pub const VAULT: Acc = AccountId32::new([88u8; 32]);
+pub struct RecordingSink;
+impl pallet_vitreus_dex::TreasurySink<NativeOrAssetId, Acc, u128> for RecordingSink {
+    fn account_for(asset: &NativeOrAssetId) -> Option<Acc> {
+        match asset {
+            NativeOrAssetId::WithId(_) => SINK_VAULT.with(|v| v.borrow().clone()),
+            NativeOrAssetId::Native => None,
+        }
+    }
+    fn note_fee(asset: &NativeOrAssetId, amount: u128) {
+        if let NativeOrAssetId::WithId(id) = asset {
+            SINK_NOTED.with(|n| n.borrow_mut().push((*id, amount)));
+        }
+    }
+}
+thread_local! {
+    pub static SINK_VAULT: RefCell<Option<Acc>> = const { RefCell::new(None) };
+    pub static SINK_NOTED: RefCell<Vec<(u128, u128)>> = const { RefCell::new(Vec::new()) };
+}
+
 /// D4: the runtime-style adapter that lets the DEX resolve a launch asset's
 /// creator fee recipient through the launchpad.
 pub struct LaunchpadCreators;
@@ -160,6 +183,7 @@ impl pallet_vitreus_dex::Config for Test {
     type ExcessRecipient = ExcessRecipient;
     type DefaultProtocolFeeRecipient = TreasuryAccount;
     type CreatorFeeRecipient = LaunchpadCreators;
+    type TreasurySink = ();
     type DefaultBidWindowBlocks = ConstU64<10>;
     type DefaultSettlementWindowBlocks = ConstU64<5>;
     type DefaultSolverBondAmount = ConstU128<1_000_000_000_000>;
@@ -229,6 +253,7 @@ parameter_types! {
         graduation_target: T_DEFAULT,
         curve_fee_bps: 100,
         protocol_share_bps: 5_000,
+        treasury_share_bps: 0,
         pool_fee_tier: 3,
         creation_fee: CREATION_FEE,
     };
@@ -283,6 +308,7 @@ impl pallet_launchpad::Config for Test {
     type IntoAssetKind = IntoAssetKind;
     type Dex = VitreusDex;
     type Treasury = TreasuryAccount;
+    type CurveTreasurySink = RecordingSink;
     type PalletId = LaunchpadPalletId;
     type TotalSupply = TotalSupply;
     type Sellable = Sellable;
@@ -315,6 +341,7 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
             (DAVE, RICH),
             (TREASURY, ED),
             (EXCESS, ED),
+            (VAULT, ED),
         ],
     }
     .assimilate_storage(&mut t)
@@ -325,6 +352,8 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
         HOOK_CALLS.with(|c| c.borrow_mut().clear());
         HOOK_BLACKLIST.with(|b| *b.borrow_mut() = None);
         HOOK_REJECT_CREATION_BLOCK.with(|r| *r.borrow_mut() = false);
+        SINK_VAULT.with(|v| *v.borrow_mut() = None);
+        SINK_NOTED.with(|n| n.borrow_mut().clear());
     });
     ext
 }
