@@ -204,6 +204,7 @@ pub struct TreasuryTerms {
     /// Blocks without a trade after which `retire` is allowed. Snapshotted per launch at create.
     pub dormancy_blocks: BlockNumber,      // 90 * DAYS
     /// Operational (live, not snapshotted) — they bound a keeper's call, not a launch's economics.
+    pub min_stake: Balance,                // 1 VTRS: `stake` refuses smaller pending (§6.2 spam bound)
     pub max_burn_impact_bps: u16,          // 50: a slice may move the venue price ≤ 0.5 %
     pub min_burn_interval: BlockNumber,    // 10: one slice per launch per interval
     pub keeper_bounty_bps: u16,            // 50 of the VTRS realised in a compound, to the caller
@@ -245,8 +246,8 @@ LnrgPerShare: U256
 LnrgAccounted: Balance
 Terms: TreasuryTerms
 TreasuryTargets: BoundedVec<AccountId, MaxTreasuryTargets>
-/// Set once by the first successful stake(); before it, stake() calls bond instead of bond_extra.
-Bonded: bool
+/// True between a bond change whose re-cooperate failed and the next successful retarget (§6.2).
+CooperationStale: bool
 ```
 
 Share price is `ledger.active / TotalShares` read from `energy-generation`'s `Ledger(vault)` at every mint and redeem — never cached — so a deferred slash that lands between two calls is simply reflected in the next one. A launch's *retiring* principal is not in `active` and not in shares; it is the chunk it holds.
@@ -259,7 +260,7 @@ Share price is `ledger.active / TotalShares` read from `energy-generation`'s `Le
 | `curve_treasury_share_bps` | `CurveParams.treasury_share_bps` | at `create_launch` |
 | `dormancy_blocks` | `LaunchTreasury.dormancy_blocks` | at `create_launch` |
 | validator targets | `TreasuryTargets` | live — where staked VTRS sits is a live governance choice, and one cooperate serves every launch |
-| impact cap, interval, bounty | `Terms` | live — operational bounds on keepers |
+| min stake, impact cap, interval, bounty | `Terms` | live — operational bounds on keepers |
 
 ---
 
@@ -274,11 +275,23 @@ Every call except the two governance setters is permissionless. Nothing in this 
 ### 6.2 `stake(launch_id)` — pending → bonded → cooperating
 
 1. `p = pending; pending = 0`. Require `p > 0`.
-2. If `!Bonded`: dispatch `bond(controller = vault, value = p, payee = Account(vault))` as `Signed(vault)`; `Bonded = true`. Else `bond_extra(p)`. Either way the ledger's `active` rises by `p`.
+2. If the vault has no ledger (`Bonded(vault)` is empty in `energy-generation` — read, not cached): dispatch `bond(controller = vault, value = p, payee = Account(vault))` as `Signed(vault)`. Else `bond_extra(p)`. Either way the ledger's `active` rises by `p`.
 3. Mint shares: `s = TotalShares == 0 ? p : p × TotalShares / (active_before)`; checkpoint the launch's `lnrg_debt` first (§6.3), then `shares += s; TotalShares += s`.
-4. `retarget()` inline (below). Its failure is **not** an error of `stake`: the bond is in place and earning nothing until the next successful retarget, which anyone may call. Event `StakeRetargetFailed { reason }` so the frontend can show it.
+4. `retarget()` inline (below), **in the same extrinsic**. Its failure is **not** an error of `stake`: the bond is in place, `CooperationStale` is set to `true`, and event `CooperationStale { reason }` is emitted; the next `retarget()` — which anyone may call, and which every later `stake` and `retire` runs again — clears it.
 
-`retarget()` (anyone): filter `TreasuryTargets` to validators that currently satisfy what `cooperate` will check — `Validators::contains_key`, `prefs.collaborative`, `is_legit_for_collab` — split `ledger.active` equally among survivors, dispatch `cooperate(targets)` as `Signed(vault)`. `cooperate` is all-or-nothing, which is why the filter runs first (FM-T3). Fails cleanly with `ReputationTooLow` while the vault is younger than 21.4 days (FM-T2) or `NoTargets` if nothing survives the filter.
+`retarget()` (anyone): filter `TreasuryTargets` to validators that currently satisfy what `cooperate` will check — `Validators::contains_key`, `prefs.collaborative`, `is_legit_for_collab` — split `ledger.active` equally among survivors, dispatch `cooperate(targets)` as `Signed(vault)`. `cooperate` is all-or-nothing, which is why the filter runs first (FM-T3). Fails cleanly with `ReputationTooLow` while the vault is younger than 21.4 days (FM-T2) or `NoTargets` if nothing survives the filter. On success `CooperationStale = false`.
+
+**Decision: cooperation is re-submitted in the same extrinsic as every change to the bond, and this pallet has no `on_initialize`.** The problem (§1, last paragraph) is that `bond_extra` grows `ledger.active` but not the per-target stakes, so bonded and cooperated drift apart until `cooperate` is re-sent. Three ways to close it were priced:
+
+| Option | Cost | Failure mode |
+|---|---|---|
+| **(a) in-extrinsic, atomic with the bond change** — chosen | `cooperate(K)` = 66 µs + 3.3 µs·K + 12+K reads + 6 writes ≈ **1.4 ms ref-time at K = 16** (energy-generation `weights.rs`), paid by the caller of `stake`/`retire`/`retarget` | a `DispatchError` the caller sees and the chain records; the bond is never lost, only un-cooperated, and the state says so (`CooperationStale`) |
+| (b) once per era from `on_initialize` | one `CurrentEra` read on **every block** (25 µs, the era boundary test) + `cooperate(K)` on the first block of each era (1.4 ms, 0.07 % of a 2 s block) — cheap in weight | a hook cannot fail loudly: an `Err` from `cooperate` inside `on_initialize` can only be logged or turned into the same `CooperationStale` flag that (a) needs anyway, and a hook that panics halts block production. The bound is `K`, not the number of launches (the pooled ledger is one `cooperate`), so this is not the unbounded-loop brick — but it buys nothing (a) does not, at the price of code that runs when nothing changed |
+| (c) leave the drift, re-cooperate lazily on the next `stake` | zero extra | new principal earns nothing until the next deposit — for a launch that has just gone quiet, indefinitely |
+
+Under (a) the invariant is exact: **after any successful `stake`, `retire` or `retarget`, `Σ Cooperations.targets == ledger.active`**, checked in `try_state` (I-T7). The only state in which they differ is `CooperationStale == true`, which is observable, emitted, and cleared by a permissionless call. There is no per-block code in this pallet; `Hooks` implements `try_state` and `integrity_test` only.
+
+Spam bound: `stake` requires `pending ≥ MinStake` (term; default 1 VTRS = `MinCooperatorBond`), so a dust deposit cannot make a keeper trigger K writes for nothing; above it, the caller pays the weight and the pallet does not care how often it is called. `cooperate` re-sent mid-era does not change the current era's exposure (exposure is taken at election from `Cooperators`), so there is no reward-side reason to throttle it.
 
 Why stake is a separate, permissionless step and not part of the swap: `bond_extra + cooperate(K)` is K-proportional weight and a reputation check; putting it in `do_swap` would make a third party's trade pay for it and fail on it. Same reasoning as D4's pull.
 
@@ -385,6 +398,7 @@ Weights: `stake` = `bond_extra` + `cooperate(K)` + this pallet's writes, `K = Ma
 - **I-T4 (uniformity).** Every `LaunchTreasury` created in the same block has identical snapshotted terms; no extrinsic takes a per-launch term as an argument.
 - **I-T5 (one-way).** `Retiring → Retired` only; `Retired` never returns to `Active`; `account_for` is `None` for both.
 - **I-T6 (burn is total).** After every `compound`, the vault's balance of the launch asset is zero.
+- **I-T7 (no drift).** `CooperationStale == false` ⇒ `Σ Cooperations(vault).targets == ledger.active`. §6.2.
 
 ### 8.2 Failure modes
 
@@ -397,14 +411,25 @@ Weights: `stake` = `bond_extra` + `cooperate(K)` + this pallet's writes, `K = Ma
 | FM-T5 | Payout not claimed within `HistoryDepth` | forfeited; permissionless, fee-waived `payout_stakers`; indexer keeper; `unclaimed_eras()` shown |
 | FM-T6 | Validator slash | `ledger.active` falls; share price falls uniformly; nothing to do — honest consequence of staking, and the filter in FM-T3 drops a slashed-and-chilled validator on the next retarget |
 | FM-T7 | 64 unbonding chunks outstanding | `retire` fails `NoMoreChunks`; retry after a `finalize` |
-| FM-T8 | Last active launch retires; `unbond` would leave `active < MinCooperatorBond` | `retire` dispatches `chill` first; next `stake` re-cooperates; `Bonded` observes the ledger, not itself |
+| FM-T8 | Last active launch retires; `unbond` would leave `active < MinCooperatorBond` | `retire` dispatches `chill` first; next `stake` re-cooperates; the ledger is read, never cached |
 | FM-T9 | Retired token revives | slice goes to protocol forever; disclosed on the token page |
 | FM-T10 | Wash trade to keep a treasury from dormancy | harmless; the attacker pays 30 bps to keep yield flowing to a token they hold |
 | FM-T11 | Retirement burns graduate a dead curve | intended (§2.4.3): treasury VTRS becomes locked depth holders can sell into |
 
-### 8.3 Test plan (names for the implementer)
+### 8.3 Decided: the slash-deferral asymmetry is accepted
 
-*Failure-mode:* `fm_t1_slice_never_exceeds_impact_cap`, `fm_t2_stake_before_reputation_keeps_bond_and_retries`, `fm_t3_retarget_filters_chilled_and_noncollab`, `fm_t4_dry_broker_keeps_lnrg_accrued`, `fm_t6_slash_devalues_every_launch_equally`, `fm_t7_no_more_chunks_is_retryable`, `fm_t8_last_retire_chills_first_and_next_stake_recooperates`, `fm_t11_retirement_can_graduate_a_curve`.
+Slashes apply `SlashDeferDuration = 36` eras (6 days) after the offence, and until then `Ledger.active` still counts the stake that will be removed. A launch that retires inside that window redeems its shares at the pre-slash price and escapes its share of the slash; the launches still active absorb it. Symmetrically, a launch whose principal is staked *into* the window pays for an offence it was never exposed to. This is accepted, and here is why, so that nobody re-derives it:
+
+1. **The alternative is to hold every retirement for six days.** The only way to price shares net of a pending slash is to wait for it to apply (or to discount by `UnappliedSlashes`, which the next point rules out). That delays every exit — every one of which already waits `BondingDuration` = 7 days — by a further `SlashDeferDuration` for an event that has usually not happened.
+2. **Discounting by `UnappliedSlashes` can over-charge.** The deferral exists so that governance can `cancel_deferred_slash` a slash it judges wrong. A redemption priced against a slash that is later cancelled has taken money from a launch that owed none, and there is no way to give it back — the shares are gone. Under-charging by the pending amount, which is what accepting does, is at least reversible in aggregate: the vault keeps earning.
+3. **The amount is small by construction.** The vault splits equally across `K ≤ 16` targets, so one validator's slash at fraction `f` removes `f / K` of the vault: a 1 % slash on one of 16 targets is 0.06 % of every launch's principal; the 100 % equivocation case is 6.25 %. What a retiring launch escapes is its share of that, and what a joining launch overpays is the same figure. Dormancy is 90 days, so a retire is not a strategic act by a holder watching for offences; `retire` is permissionless, so a bot could time one, and what it would gain for a third party is bounded by the numbers above.
+4. **It is the honest consequence of pooling.** A per-launch stash would expose each launch to exactly its own slash, and §2.5 rejected that shape for three independent reasons. Pooled means shared, in both directions.
+
+`try_state` does not assert anything about `UnappliedSlashes`; the share price is `active / TotalShares` and nothing else.
+
+### 8.4 Test plan (names for the implementer)
+
+*Failure-mode:* `fm_t1_slice_never_exceeds_impact_cap`, `fm_t2_stake_before_reputation_keeps_bond_and_retries`, `fm_t3_retarget_filters_chilled_and_noncollab`, `fm_t4_dry_broker_keeps_lnrg_accrued`, `fm_t6_slash_devalues_every_launch_equally`, `fm_t7_no_more_chunks_is_retryable`, `fm_t8_last_retire_chills_first_and_next_stake_recooperates`, `fm_t11_retirement_can_graduate_a_curve`, `i_t7_cooperation_matches_active_after_every_bond_change`.
 
 *Invariant/lifecycle:* `t_l1_fee_to_pending_to_shares_at_price`, `t_l2_harvest_attributes_by_shares_not_by_time`, `t_l3_compound_burns_everything_it_buys`, `t_l4_retire_requires_dormancy_and_is_one_way`, `t_l5_finalize_credits_every_matured_launch_exactly`, `t_l6_snapshotted_terms_survive_set_terms`, `t_l7_i_t1_conservation_under_random_ops` (property-style), `t_g1_no_origin_can_withdraw`, `t_g2_set_targets_recooperates_without_touching_shares`, `t_g3_mainnet_sink_folds_into_protocol`.
 
@@ -414,10 +439,8 @@ Weights: `stake` = `bond_extra` + `cooperate(K)` + this pallet's writes, `K = Ma
 
 ## 9. Open items for the implementer
 
-1. **Share-price read.** `Ledger(vault).active` includes stake that a deferred slash will remove in ≤ 6 days. A launch that retires between the offence and the application escapes its share of the slash. Either accept (the window is short and the amount is a validator's slash fraction) or reduce redemptions by `UnappliedSlashes` proportionally. Recommend accept, record.
-2. **`cooperate` weight vs `stake` frequency.** Every `stake()` re-cooperates. If keepers call it per block, that is `K` writes per block for no gain. Rate-limit `stake` to once per `MinStakeInterval` (an era is the natural unit — nothing earns before the next era anyway) or batch: `stake` only bonds, and `retarget` runs once per era from `on_initialize` on the first block of an era. Recommend the latter; it also removes FM-T2's retry burden.
-3. **Curve-venue impact cap.** The curve's constant-product is over virtual reserves (LAUNCHPAD_SPEC §3.1); `cap` must use them, not `real_quote`.
-4. **Bounty vs dust.** A 50 bps bounty on a compound realising 0.01 VTRS is dust the caller cannot receive above ED considerations; below `ED / 10` pay no bounty.
-5. **An in-runtime staking trait.** Dispatching `energy-generation` calls as `Signed(vault)` couples this pallet to their argument shapes and re-runs `ensure_signed`. If the Foundation is open to it, a `trait PalletStaker { bond, bond_extra, cooperate, unbond, withdraw }` on `energy-generation` for in-runtime callers would be cleaner and would let the reputation check be applied deliberately rather than incidentally. Ask *after* v2 works with dispatch, with the working version as the argument.
-6. **Frontend.** Token and launch pages: treasury balance (pending, staked value, LNRG accrued, pending burn), last compound, cumulative burned, status, and the unclaimed-era warning. The indexer: `payout_stakers` keeper for the treasury's targets, and `stake`/`compound` pokes.
-7. **The §9 record in LAUNCHPAD_SPEC.** After this design is accepted, §9.2's two wrong facts (C1, C2) should be corrected in place with a pointer here; not done on this branch, since that file is under review in #100.
+1. **Curve-venue impact cap.** The curve's constant-product is over virtual reserves (LAUNCHPAD_SPEC §3.1); `cap` must use them, not `real_quote`.
+2. **Bounty vs dust.** A 50 bps bounty on a compound realising 0.01 VTRS is dust the caller cannot receive above ED considerations; below `ED / 10` pay no bounty.
+3. **An in-runtime staking trait.** Dispatching `energy-generation` calls as `Signed(vault)` couples this pallet to their argument shapes and re-runs `ensure_signed`. If the Foundation is open to it, a `trait PalletStaker { bond, bond_extra, cooperate, unbond, withdraw }` on `energy-generation` for in-runtime callers would be cleaner and would let the reputation check be applied deliberately rather than incidentally. Ask *after* v2 works with dispatch, with the working version as the argument.
+4. **Frontend.** Token and launch pages: treasury balance (pending, staked value, LNRG accrued, pending burn), last compound, cumulative burned, status, and the unclaimed-era warning. The indexer: `payout_stakers` keeper for the treasury's targets, and `stake`/`compound` pokes.
+5. **The §9 record in LAUNCHPAD_SPEC.** After this design is accepted, §9.2's two wrong facts (C1, C2) should be corrected in place with a pointer here; not done on this branch, since that file is under review in #100.
