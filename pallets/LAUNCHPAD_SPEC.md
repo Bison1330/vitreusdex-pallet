@@ -774,7 +774,7 @@ Errors: see §2 header; plus `ReservedAsset`, `PoolAlreadySeeded` surfaced from 
 
 ## 9. v2 design record — validator-backed treasuries
 
-**Status:** idea, recorded 2026-09-14 · **v2, after testnet** · nothing in v1 implements, reserves storage for, or depends on this. This section is a record of the idea and of the parts that are hard, written so the v2 design starts from the chain as it is rather than from the pitch. It is not a build plan.
+**Status:** idea, recorded 2026-09-14 · **v2, after testnet** · designed in `LAUNCH_TREASURY_SPEC.md` (2026-09-16), which corrects two facts in §9.2 (rewards are LNRG and the energy broker sells them for VTRS; the reputation gate is cleared by account age) · nothing in v1 implements, reserves storage for, or depends on this. This section is a record of the idea and of the parts that are hard, written so the v2 design starts from the chain as it is rather than from the pitch. It is not a build plan.
 
 ### 9.1 The idea
 
