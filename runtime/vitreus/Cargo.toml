@@ -133,6 +133,7 @@ pallet-simple-vesting = { workspace = true }
 # #[cfg]-gated entry, as with pallet-faucet.
 pallet-vitreus-dex = { workspace = true }
 pallet-launchpad = { workspace = true }
+pallet-launch-treasury = { workspace = true }
 pallet-treasury-extension = { workspace = true }
 vitreus-runtime-common = { workspace = true }
 
@@ -183,6 +184,7 @@ try-runtime = [
     "pallet-energy-broker/try-runtime",
     "pallet-vitreus-dex/try-runtime",
     "pallet-launchpad/try-runtime",
+    "pallet-launch-treasury/try-runtime",
     "pallet-energy-fee/try-runtime",
     "pallet-energy-generation/try-runtime",
     "pallet-energy-generation/try-runtime",
@@ -318,6 +320,7 @@ std = [
     "pallet-energy-broker/std",
     "pallet-vitreus-dex/std",
     "pallet-launchpad/std",
+    "pallet-launch-treasury/std",
     "pallet-energy-fee/std",
     "pallet-energy-generation/std",
     "pallet-faucet/std",
@@ -351,6 +354,7 @@ runtime-benchmarks = [
     "pallet-energy-broker/runtime-benchmarks",
     "pallet-vitreus-dex/runtime-benchmarks",
     "pallet-launchpad/runtime-benchmarks",
+    "pallet-launch-treasury/runtime-benchmarks",
     "pallet-energy-fee/runtime-benchmarks",
     "pallet-ethereum/runtime-benchmarks",
     "pallet-faucet/runtime-benchmarks",

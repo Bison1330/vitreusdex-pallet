@@ -1185,9 +1185,9 @@ impl pallet_energy_broker::Config for Runtime {
 // (pallets/vitreus-dex/SECURITY_AUDIT.md) and its test suite, but no
 // third-party audit yet; enabling it on mainnet is a separate decision and a
 // separate PR. The launchpad additionally needs permissionless asset creation,
-// which mainnet forbids. Indices: VitreusDex 43, Launchpad 57.
+// which mainnet forbids. Indices: VitreusDex 43, Launchpad 57, LaunchTreasury 59.
 #[cfg(feature = "testnet-runtime")]
-mod testnet_pallets {
+pub mod testnet_pallets {
     use super::*;
 
     parameter_types! {
@@ -1230,6 +1230,9 @@ mod testnet_pallets {
         // for why this is storage, not a constant).
         type DefaultProtocolFeeRecipient = xcm_config::TreasuryAccount;
         type CreatorFeeRecipient = LaunchpadCreators;
+        // D9: the treasury slice of a launch pool's fee is pushed into the
+        // launch treasury; mainnet, which has neither pallet, binds `()`.
+        type TreasurySink = LaunchTreasury;
         type DefaultBidWindowBlocks = DefaultBidWindowBlocks;
         type DefaultSettlementWindowBlocks = DefaultSettlementWindowBlocks;
         type DefaultSolverBondAmount = DefaultSolverBondAmount;
@@ -1287,7 +1290,8 @@ mod testnet_pallets {
                         graduation_target: 3 * UNITS,
                         virtual_quote: UNITS,
                         curve_fee_bps: 100,
-                        protocol_share_bps: 5_000,
+                        protocol_share_bps: 2_500,
+                        treasury_share_bps: 2_500,
                         pool_fee_tier: 3,
                     },
                     params_hash: Default::default(),
@@ -1328,11 +1332,14 @@ mod testnet_pallets {
         /// never validated; the caps are the only thing bounding the write.
         pub const LaunchpadUriLimit: u32 = 256;
         pub const LaunchpadDescriptionLimit: u32 = 1_024;
-        /// Placeholder governance terms; `set_params` changes them for future launches.
+        /// Placeholder governance terms; `set_params` changes them for future
+        /// launches. Curve fee split creator 50 / protocol 25 / treasury 25
+        /// (LAUNCH_TREASURY_SPEC §2.6).
         pub LaunchpadDefaultParams: pallet_launchpad::LaunchParams<Balance> = pallet_launchpad::LaunchParams {
             graduation_target: 3_000 * UNITS,
             curve_fee_bps: 100,
-            protocol_share_bps: 5_000,
+            protocol_share_bps: 2_500,
+            treasury_share_bps: 2_500,
             pool_fee_tier: 3,
             creation_fee: 1 * UNITS,
         };
@@ -1355,6 +1362,7 @@ mod testnet_pallets {
         type IntoAssetKind = LaunchpadAssetKind;
         type Dex = VitreusDex;
         type Treasury = DexProtocolFeeRecipient;
+        type CurveTreasurySink = LaunchTreasury;
         type PalletId = LaunchpadPalletId;
         type TotalSupply = LaunchpadTotalSupply;
         type Sellable = LaunchpadSellable;
@@ -1372,6 +1380,155 @@ mod testnet_pallets {
         type DefaultLaunchParams = LaunchpadDefaultParams;
         type BuyHook = ();
         type WeightInfo = pallet_launchpad::weights::SubstrateWeight<Runtime>;
+    }
+
+    // ---- pallet-launch-treasury -------------------------------------------
+    //
+    // Validator-backed treasuries (pallets/LAUNCH_TREASURY_SPEC.md). The
+    // vault stakes through `energy-generation` by dispatching its extrinsics
+    // as `Signed(vault)` (spec §3.3: the pallet has no in-runtime staking
+    // trait) and sells LNRG through the energy broker's `Swap`.
+
+    use pallet_launch_treasury::{TreasuryStaking, TreasuryTerms};
+
+    parameter_types! {
+        pub const LaunchTreasuryPalletId: PalletId = PalletId(*b"vtrs/lpt");
+        pub LnrgAssetKind: NativeOrAssetId = NativeOrAssetId::WithId(LNRG::get());
+        pub EnergyBrokerAccount: AccountId = EnergyBroker::account_id();
+        /// Spec §5.1 defaults. `dormancy_blocks` is snapshotted per treasury.
+        pub LaunchTreasuryDefaultTerms: TreasuryTerms<Balance, BlockNumber> = TreasuryTerms {
+            dormancy_blocks: 90 * DAYS,
+            min_stake: 1 * UNITS,
+            max_burn_impact_bps: 50,
+            min_burn_interval: 10,
+            keeper_bounty_bps: 50,
+        };
+    }
+
+    pub struct AssetIdOfKind;
+    impl sp_runtime::traits::Convert<NativeOrAssetId, Option<AssetId>> for AssetIdOfKind {
+        fn convert(kind: NativeOrAssetId) -> Option<AssetId> {
+            match kind {
+                NativeOrAssetId::WithId(id) => Some(id),
+                NativeOrAssetId::Native => None,
+            }
+        }
+    }
+
+    /// `energy-generation` for the vault: the stash is its own controller
+    /// and payee, every call is the pallet's own `pub fn` dispatched with
+    /// `RawOrigin::Signed(vault)`, and every error is the pallet's own.
+    pub struct EnergyGenerationStaking;
+    impl EnergyGenerationStaking {
+        fn ledger(stash: &AccountId) -> Option<pallet_energy_generation::StakingLedger<Runtime>> {
+            pallet_energy_generation::Bonded::<Runtime>::get(stash)
+                .and_then(pallet_energy_generation::Ledger::<Runtime>::get)
+        }
+        fn signed(stash: &AccountId) -> RuntimeOrigin {
+            frame_system::RawOrigin::Signed(stash.clone()).into()
+        }
+    }
+    impl TreasuryStaking<AccountId, Balance> for EnergyGenerationStaking {
+        fn is_bonded(stash: &AccountId) -> bool {
+            pallet_energy_generation::Bonded::<Runtime>::contains_key(stash)
+        }
+        fn active(stash: &AccountId) -> Balance {
+            Self::ledger(stash).map(|l| l.active).unwrap_or_default()
+        }
+        fn total(stash: &AccountId) -> Balance {
+            Self::ledger(stash).map(|l| l.total).unwrap_or_default()
+        }
+        fn is_cooperating(stash: &AccountId) -> bool {
+            pallet_energy_generation::Cooperators::<Runtime>::contains_key(stash)
+        }
+        fn cooperated(stash: &AccountId) -> Balance {
+            pallet_energy_generation::Cooperators::<Runtime>::get(stash)
+                .map(|c| c.targets.values().fold(Balance::zero(), |a, s| a.saturating_add(*s)))
+                .unwrap_or_default()
+        }
+        fn min_cooperator_bond() -> Balance {
+            pallet_energy_generation::MinCooperatorBond::<Runtime>::get()
+        }
+        fn current_era() -> u32 {
+            pallet_energy_generation::CurrentEra::<Runtime>::get().unwrap_or(0)
+        }
+        fn bonding_duration() -> u32 {
+            BondingDuration::get()
+        }
+        fn is_cooperable(validator: &AccountId) -> bool {
+            // What `cooperate` checks of a new target, so the vault never
+            // submits an all-or-nothing call that one bad target would fail.
+            pallet_energy_generation::Validators::<Runtime>::contains_key(validator)
+                && pallet_energy_generation::Validators::<Runtime>::get(validator).collaborative
+                && EnergyGeneration::is_legit_for_collab(validator)
+        }
+        fn bond(stash: &AccountId, value: Balance) -> DispatchResult {
+            EnergyGeneration::bond(
+                Self::signed(stash),
+                stash.clone(),
+                value,
+                pallet_energy_generation::RewardDestination::Account(stash.clone()),
+            )
+        }
+        fn bond_extra(stash: &AccountId, value: Balance) -> DispatchResult {
+            EnergyGeneration::bond_extra(Self::signed(stash), value)
+        }
+        fn cooperate(stash: &AccountId, targets: Vec<(AccountId, Balance)>) -> DispatchResult {
+            EnergyGeneration::cooperate(Self::signed(stash), targets)
+        }
+        fn chill(stash: &AccountId) -> DispatchResult {
+            EnergyGeneration::chill(Self::signed(stash))
+        }
+        fn unbond(stash: &AccountId, value: Balance) -> DispatchResult {
+            EnergyGeneration::unbond(Self::signed(stash), value).map(|_| ()).map_err(|e| e.error)
+        }
+        fn withdraw_unbonded(stash: &AccountId) -> Result<Balance, DispatchError> {
+            let before = Self::total(stash);
+            // `num_slashing_spans` is only checked as an upper bound
+            // (`IncorrectSlashingSpans` if it is *below* the real count, when
+            // the last chunk leaves and the stash is killed) and otherwise
+            // feeds the call's post-dispatch weight, which this caller does
+            // not use. A span is one slash on the vault; 256 is not reachable.
+            EnergyGeneration::withdraw_unbonded(Self::signed(stash), 256).map_err(|e| e.error)?;
+            Ok(before.saturating_sub(Self::total(stash)))
+        }
+    }
+
+    impl pallet_launch_treasury::Config for Runtime {
+        type RuntimeEvent = RuntimeEvent;
+        type TreasuryManageOrigin = EnsureRoot<AccountId>;
+        type Staking = EnergyGenerationStaking;
+        type Exchange = EnergyBroker;
+        type BrokerAccount = EnergyBrokerAccount;
+        type LnrgAsset = LnrgAssetKind;
+        type AssetIdOf = AssetIdOfKind;
+        type PalletId = LaunchTreasuryPalletId;
+        type MaxTargets = frame_support::traits::ConstU32<16>;
+        type MaxUnlockingChunks = MaxUnlockingChunks;
+        type DefaultTerms = LaunchTreasuryDefaultTerms;
+        type WeightInfo = pallet_launch_treasury::weights::SubstrateWeight<Runtime>;
+    }
+
+    /// Funds the vault with its existential deposit once, from the
+    /// Treasury, so `OnNewAccount` starts its reputation record at the
+    /// upgrade block (spec §2.2, §7.4) rather than at the first fee.
+    pub struct FundLaunchTreasuryVault;
+    impl frame_support::traits::OnRuntimeUpgrade for FundLaunchTreasuryVault {
+        fn on_runtime_upgrade() -> Weight {
+            let vault = LaunchTreasury::vault();
+            if frame_system::Pallet::<Runtime>::providers(&vault) > 0 {
+                return <Runtime as frame_system::Config>::DbWeight::get().reads(1);
+            }
+            let ed = <Runtime as pallet_balances::Config>::ExistentialDeposit::get();
+            let res = <Balances as frame_support::traits::fungible::Mutate<AccountId>>::transfer(
+                &xcm_config::TreasuryAccount::get(),
+                &vault,
+                ed,
+                frame_support::traits::tokens::Preservation::Preserve,
+            );
+            log::info!(target: "runtime::launch-treasury", "vault funded: {:?}", res.map(|_| ()));
+            <Runtime as frame_system::Config>::DbWeight::get().reads_writes(3, 3)
+        }
     }
 }
 
@@ -2242,6 +2399,8 @@ construct_runtime!(
         #[cfg(feature = "testnet-runtime")]
         Launchpad: pallet_launchpad = 57,
         TechnicalCommitteeTreasury: pallet_treasury::<Instance1> = 58,
+        #[cfg(feature = "testnet-runtime")]
+        LaunchTreasury: pallet_launch_treasury = 59,
 
         // Parachains pallets
         ParachainsOrigin: parachains_origin::{Pallet, Origin} = 60,

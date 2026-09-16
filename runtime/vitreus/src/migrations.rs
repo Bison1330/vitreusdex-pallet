@@ -10,6 +10,9 @@ pub type Permanent = (
 pub type V0213 =
     (InitTechnicalCommitteeTreasury, pallet_privileges::migration::MigrateToV1<Runtime>);
 
+#[cfg(feature = "testnet-runtime")]
+pub type Unreleased = (crate::testnet_pallets::FundLaunchTreasuryVault,);
+#[cfg(not(feature = "testnet-runtime"))]
 pub type Unreleased = ();
 
 pub struct InitTechnicalCommitteeTreasury;

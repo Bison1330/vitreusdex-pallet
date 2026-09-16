@@ -14276,6 +14276,7 @@ dependencies = [
  "pallet-grandpa",
  "pallet-hotfix-sufficients",
  "pallet-im-online",
+ "pallet-launch-treasury",
  "pallet-launchpad",
  "pallet-manual-bridge",
  "pallet-membership",
