@@ -8,7 +8,7 @@
 
 A comprehensive security audit was performed on the `pallet-vitreus-dex` AMM pallet for the Vitreus blockchain. The audit covered integer safety, access control, AMM math correctness, LP share calculations, slippage protection, pool account security, edge cases, fee logic, energy hooks, locked positions, reserve manipulation, and first-depositor attacks.
 
-**12 findings were identified and resolved — 1 Critical, 4 High, 4 Medium, 3 Low.** A thirteenth, Critical, was found and fixed on 2026-09-15 (below); it is a truncation Finding 6 did not address.
+**12 findings were identified and resolved — 1 Critical, 4 High, 4 Medium, 3 Low.** A thirteenth, Critical, was found and fixed on 2026-09-15 (below); it is a truncation Finding 6 did not address. A fourteenth, Low and open, was found on 2026-09-16: the first routed fee on a fresh chain cannot create its recipient when it is below ED, so small swaps fail until a larger one has landed.
 
 All 11 unit tests pass. The full runtime (`vitreus-power-plant-runtime` with `testnet-runtime` feature) compiles cleanly.
 
@@ -55,6 +55,16 @@ The following categories were reviewed:
 **Relation to Finding 6.** Finding 6 length-prefixed the two asset encodings so that different pairs could not produce the same *concatenation*. That is ambiguity within the key; the key was then truncated to eight bytes regardless, which is the collision here. Finding 6's fix is kept and is still necessary for the hashed key to be unambiguous.
 
 **Fix.** The seed is `blake2_256(pair_key)`; eight bytes of a hash do not collide. Tests: `d8_distinct_pairs_derive_distinct_pool_accounts`, `d8_second_pool_on_a_shared_account_would_read_the_first_pools_reserves` (red before, green after). On the fork, `migrations::v2::MigrateToV2` (storage version 1 → 2) moves each existing pool's reserves from the old account to the new one and rewrites `pool_account`, with a `pre_upgrade` check that no two pools already share an old account — that state is the bug, and cannot be attributed after the fact (`d8_migration_v2_moves_reserves_to_the_hash_derived_account`). The upstream submission ships the fix with no migration: no chain upstream has a pre-D8 pool.
+
+### Finding 14 (2026-09-16) — LOW — First routed fee below ED cannot create its recipient; the swap fails
+
+**Found by** the launch-treasury keeper's first `compound` on a fresh dev chain: the burn slice's DEX swap failed with `Token(BelowMinimum)`, and so did a plain 0.026 VTRS swap from a user account, until one ≥ ED swap had gone through — after which the same dust swap succeeded.
+
+**Description.** `swap` routes `protocol + creator` out of the pool account into `fee_escrow_account()` (D4) and the treasury slice into the sink's vault (D9), both with `fungibles::transfer`. Those accounts do not exist until their first deposit, and pallet-balances refuses to create an account with less than the existential deposit (100 µVTRS). So on a chain where the escrow account has never received a fee, every swap whose routed slice is below ED — a 0.3 % tier routes 10 bps each way, so any swap under ~1 VTRS — fails in full, with a token error the caller has no way to read as "swap smaller than the fee floor". The launchpad's curve buy has the same shape for the treasury sink: a small first buy on a launch whose vault does not exist yet fails at the sink transfer, before `note_fee` can withhold the ED (LAUNCH_TREASURY_SPEC §9.6, which handles the case where the first fee *is* above ED). Once each recipient exists, any amount lands, so the window is exactly "before the first fee ≥ ED", which on a chain that receives the pallet by upgrade is closed by the upgrade's own setup and on a from-genesis chain (a dev chain, a fork's fresh start) is the first real swap.
+
+**Same class as** LAUNCH_TREASURY_SPEC §9.6 / §10.11: an account the pallet relies on that nothing funds at genesis.
+
+**Recommendation (not applied).** Fund `fee_escrow_account()` with ED where the pallet is set up — a `GenesisConfig` for the from-genesis path and the fork's migration for the upgrade path — the way the treasury's `FundLaunchTreasuryVault` does for the vault; and in `swap`, when a routed slice is below ED *and* its recipient has no providers, leave that slice in the pool (it accrues to LPs at the next `sync_reserves`) rather than failing the trade. The sink's `account_for` could likewise answer `None` while the vault does not exist and the slice is below ED, so the launchpad and DEX fold it into the protocol share as they already do for a retired treasury. Tests: a swap under 1 VTRS on a fresh externalities with no prior fee (red today), then the same after the fix.
 
 ## Test Results
 
