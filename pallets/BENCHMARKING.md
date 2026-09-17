@@ -167,10 +167,21 @@ Then read the numbers, not just the diff:
 - **Treasury ordering holds:** `stake() > retarget()` (a `bond_extra` and
   a harvest on top of the same `cooperate(16)`); `set_targets() ≈
   retarget()` plus one write; `retire() > retarget()` (an `unbond` plus the
-  re-cooperate); `compound()` is the largest fixed-size call (a broker
-  swap, a DEX swap, a burn, a bounty transfer); `finalize_retirement(n)` has
-  a positive slope on `n` of roughly one `Treasuries` read + write per
-  entry. `stake`'s storage list must include `EnergyGeneration::Ledger`,
+  re-cooperate); `retire()` and `compound()` are the two largest and
+  within a few percent of each other — `retire` on storage (71 reads,
+  the re-cooperate over 16 targets), `compound` on execution (a broker
+  swap, a DEX swap, a burn, two bounty transfers) — and which one leads
+  is machine-dependent (the dev box had `compound` ahead by 3.5 %, c-16
+  had `retire` ahead by 3.6 %); `finalize_retirement(n)` has a positive
+  slope on `n` of roughly one `Treasuries` read + write per entry.
+  Measured 2026-09-16 at `f768be5`: stake 594.7 µs, retarget 464.6,
+  harvest 42.7, compound 652.7, retire 676.7, finalize 130.2 + 9.96·n,
+  set_terms 8.6, set_targets 437.8 — 2.1–3.6× the composed placeholders,
+  all in the conservative direction. Note `retarget` is `cooperate(16)`
+  plus ~10 µs, so it says `cooperate(16)` costs ~455 µs on that box
+  against the ~119 µs `energy-generation`'s own weights claim: their
+  weights are lighter than this hardware measures, which is where the
+  memory-bandwidth caveat shows up. `stake`'s storage list must include `EnergyGeneration::Ledger`,
   `Cooperators`, `Validators` (× 16) and `Reputation::AccountReputation`;
   `compound`'s must include the broker's account, `VitreusDex::Pools`,
   `LastSwapBlock` and the launch asset's `Assets::Asset` (the burn). If
