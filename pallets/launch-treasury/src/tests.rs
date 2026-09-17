@@ -96,6 +96,11 @@ fn graduated_with_volume(creator: impl Borrow<Acc>, swaps: u32) -> LaunchId {
     }
     id
 }
+/// Closed: retired, and nothing left in the record. The record itself
+/// stays (R3), so a closed launch is never mistaken for an unfunded one.
+fn closed(id: LaunchId) -> bool {
+    matches!(Treasuries::<Test>::get(id), Some(t) if t.status == TreasuryStatus::Retired && t.shares == 0 && t.pending == 0 && t.pending_burn == 0 && t.lnrg_accrued == 0)
+}
 fn last_event() -> Event<Test> {
     System::events()
         .into_iter()
@@ -317,12 +322,12 @@ fn t_l9_burn_slice_pays_the_keeper() {
         // Every slice pays until the principal is gone, at the rate and no
         // more; the record still closes.
         let mut slices = 1;
-        while Treasuries::<Test>::get(a).is_some() && slices < 10_000 {
+        while !closed(a) && slices < 10_000 {
             run_to(now() + BURN_INTERVAL);
             assert_ok!(compound(a));
             slices += 1;
         }
-        assert!(Treasuries::<Test>::get(a).is_none(), "closed");
+        assert!(closed(a), "closed");
         assert!(slices > 2, "several slices");
         let paid = vtrs(KEEPER) - keeper_before;
         assert!(paid > bounty, "more than one slice paid");
@@ -421,13 +426,13 @@ fn t_l5_finalize_credits_every_matured_launch_exactly() {
         // A retired treasury burns its principal into the pool and closes on dust.
         let supply = Assets::total_supply(asset(a));
         let mut slices = 0;
-        while Treasuries::<Test>::get(a).is_some() && slices < 10_000 {
+        while !closed(a) && slices < 10_000 {
             run_to(now() + BURN_INTERVAL);
             assert_ok!(compound(a));
             slices += 1;
             assert_eq!(tok(a, vault()), 0);
         }
-        assert!(Treasuries::<Test>::get(a).is_none(), "closed");
+        assert!(closed(a), "closed");
         assert!(slices >= 1, "slice size is fm_t1's concern; here the principal is under one cap");
         assert!(Assets::total_supply(asset(a)) < supply);
         ok_state();
@@ -462,12 +467,12 @@ fn t_l8_from_genesis_first_fee_withholds_ed_so_retirement_closes() {
         assert_eq!(System::consumers(&vault()), 1, "the LNRG account is the consumer");
 
         let mut slices = 0;
-        while Treasuries::<Test>::get(a).is_some() && slices < 10_000 {
+        while !closed(a) && slices < 10_000 {
             run_to(now() + BURN_INTERVAL);
             assert_ok!(compound(a));
             slices += 1;
         }
-        assert!(Treasuries::<Test>::get(a).is_none(), "closed");
+        assert!(closed(a), "closed");
         assert_eq!(vtrs(vault()), ED, "the first fee's ED outlives the launch");
         assert!(VaultFunded::<Test>::get());
         ok_state();
@@ -1065,12 +1070,12 @@ fn r3_a_closed_treasury_is_reopened_by_the_next_fee() {
         MockStaking::set_era(10 + BONDING_DURATION);
         assert_ok!(finalize(a));
         let mut slices = 0;
-        while Treasuries::<Test>::get(a).is_some() && slices < 10_000 {
+        while !closed(a) && slices < 10_000 {
             run_to(now() + BURN_INTERVAL);
             assert_ok!(compound(a));
             slices += 1;
         }
-        assert!(Treasuries::<Test>::get(a).is_none(), "closed");
+        assert!(closed(a), "closed");
 
         // The token revives.
         let proto_before = ProtocolFeesUnclaimed::<Test>::get();
@@ -1080,7 +1085,8 @@ fn r3_a_closed_treasury_is_reopened_by_the_next_fee() {
             100 * UNIT * 15 / 10_000,
             "a retired launch's slice folds into the protocol share forever (FM-T9)"
         );
-        assert!(Treasuries::<Test>::get(a).is_none(), "retirement is one-way: no new record");
+        assert!(closed(a), "retirement is one-way: the closed record stands, nothing reopened");
+        assert_eq!(<LaunchTreasury as TreasurySink<NativeOrAssetId, Acc, u128>>::account_for(&kind(a)), None);
     });
 }
 

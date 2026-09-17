@@ -398,11 +398,11 @@ Weights: `stake` = `bond_extra` + `cooperate(K)` + this pallet's writes, `K = Ma
 
 ### 8.1 Invariants
 
-- **I-T1 (conservation).** `free(vault) + ledger.total + Σ retiring chunks == ED + Σ pending + Σ pending_burn + (share value of every Active launch) + Σ unbonded-but-unfinalized` — the `ED` term only once `VaultFunded` is set (§9.6: by the upgrade, or withheld from the first fee); before that the vault holds nothing — up to slashes (which reduce `ledger.active` and therefore every share's value uniformly) and floor rounding in the pallet's favour. `try_state` checks it.
-- **I-T2.** `Σ shares == TotalShares`; `LnrgAccounted ≤ LNRG balance(vault) + Σ LNRG sold`.
+- **I-T1 (conservation).** `free(vault) + ledger.total + Σ retiring chunks ≥ ED + Σ pending + Σ pending_burn + (share value of every Active launch) + Σ unbonded-but-unfinalized` — a floor, not an equality, since anyone can send the vault VTRS that nothing accounts for (R5, 2026-09-17) — the `ED` term only once `VaultFunded` is set (§9.6: by the upgrade, or withheld from the first fee); before that the vault holds nothing — up to slashes (which reduce `ledger.active` and therefore every share's value uniformly) and floor rounding in the pallet's favour. `try_state` checks it.
+- **I-T2.** `Σ shares == TotalShares`; `Σ claimable LNRG ≤ LnrgAccounted ≤ LNRG balance(vault)` — a sale lowers `LnrgAccounted` by what left (R1, 2026-09-17; the earlier form, `≤ balance + Σ sold`, described the bug that made the next equal amount of rewards unattributable).
 - **I-T3 (no exit).** No extrinsic moves VTRS out of the vault except: broker sale input (LNRG, not VTRS), venue buy (vault → pool account / curve escrow), keeper bounty (≤ `keeper_bounty_bps` of one sale plus one slice, to the caller), retirement dust (≤ one minimum quote, to the protocol recipient). In particular no governance origin can withdraw, redirect or unbond. Tests T-G1..G3.
 - **I-T4 (uniformity).** Every `LaunchTreasury` created in the same block has identical snapshotted terms; no extrinsic takes a per-launch term as an argument.
-- **I-T5 (one-way).** `Retiring → Retired` only; `Retired` never returns to `Active`; `account_for` is `None` for both.
+- **I-T5 (one-way).** `Retiring → Retired` only; `Retired` never returns to `Active`; `account_for` is `None` for both. A closed treasury keeps its record — `Retired` with nothing in it — rather than being removed, so the next fee cannot mistake it for a launch never funded (R3, 2026-09-17).
 - **I-T6 (burn is total).** After every `compound`, the vault's balance of the launch asset is zero.
 - **I-T7 (no drift).** `CooperationStale == false` ⇒ `Σ Cooperations(vault).targets == ledger.active`. §6.2.
 

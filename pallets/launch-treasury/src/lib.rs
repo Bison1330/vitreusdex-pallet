@@ -715,21 +715,24 @@ pub mod pallet {
                 }
             }
 
-            // A retired treasury closes once what is left cannot be quoted.
+            // A retired treasury closes once what is left cannot be quoted:
+            // the remainder goes to the protocol recipient and the record
+            // stays, as `Retired` with nothing in it. It is never removed —
+            // a launch with no record is one that was never funded, and
+            // `account_for` would fund it again on the next trade (R3).
             if t.status == TreasuryStatus::Retired && t.shares.is_zero() && t.lnrg_accrued.is_zero() {
                 let ed = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::minimum_balance(Self::native());
-                if t.pending_burn < ed && t.pending.is_zero() {
-                    if !t.pending_burn.is_zero() {
-                        <<T as pallet_vitreus_dex::Config>::Assets as FungiblesMutate<T::AccountId>>::transfer(
-                            Self::native(),
-                            &vault,
-                            &Self::protocol_recipient(),
-                            t.pending_burn,
-                            Preserve,
-                        )?;
-                        Self::deposit_event(Event::DustSwept { launch_id, amount: t.pending_burn });
-                    }
-                    Treasuries::<T>::remove(launch_id);
+                if !t.pending_burn.is_zero() && t.pending_burn < ed && t.pending.is_zero() {
+                    <<T as pallet_vitreus_dex::Config>::Assets as FungiblesMutate<T::AccountId>>::transfer(
+                        Self::native(),
+                        &vault,
+                        &Self::protocol_recipient(),
+                        t.pending_burn,
+                        Preserve,
+                    )?;
+                    Self::deposit_event(Event::DustSwept { launch_id, amount: t.pending_burn });
+                    t.pending_burn = Zero::zero();
+                    Treasuries::<T>::insert(launch_id, &t);
                     return Ok(());
                 }
             }
@@ -787,11 +790,25 @@ pub mod pallet {
             if y.is_zero() {
                 return Ok(None);
             }
-            let tokens = match phase {
+            let bought = match phase {
                 Phase::Graduated => {
-                    <T as pallet_launchpad::Config>::Dex::swap_for(vault, Self::native(), asset.clone(), y, Zero::zero())?
+                    <T as pallet_launchpad::Config>::Dex::swap_for(vault, Self::native(), asset.clone(), y, Zero::zero())
                 },
-                _ => <Venue<T> as CurveVenue<_, _, _, _>>::buy_for(vault, launch_id, y, Zero::zero())?,
+                _ => <Venue<T> as CurveVenue<_, _, _, _>>::buy_for(vault, launch_id, y, Zero::zero()),
+            };
+            // A slice the venue cannot quote (dust under the curve's fee
+            // rounding) is nothing to burn this call, not an error that
+            // reverts the sale beside it (R4). The venue refuses before it
+            // moves anything, so there is nothing to undo.
+            let tokens = match bought {
+                Ok(t) => t,
+                Err(e)
+                    if e == DispatchError::from(pallet_launchpad::Error::<T>::Unquotable)
+                        || e == DispatchError::from(pallet_launchpad::Error::<T>::ZeroAmount) =>
+                {
+                    return Ok(None)
+                },
+                Err(e) => return Err(e),
             };
             if !tokens.is_zero() {
                 <<T as pallet_vitreus_dex::Config>::Assets as FungiblesMutate<T::AccountId>>::burn_from(
@@ -960,7 +977,10 @@ pub mod pallet {
             };
             let held = Self::assets_balance(Self::native(), &vault);
             let expected = ed.saturating_add(pending).saturating_add(pending_burn).saturating_add(T::Staking::total(&vault));
-            frame_support::ensure!(held == expected, "I-T1: vault VTRS != ED + pending + pending_burn + ledger.total");
+            // A floor, not an equality: anyone can send the vault VTRS, and
+            // nothing accounts for it or moves it. What the invariant guards
+            // is that the records never claim more than the vault holds (R5).
+            frame_support::ensure!(held >= expected, "I-T1: vault VTRS < ED + pending + pending_burn + ledger.total");
             if !CooperationStale::<T>::get() && T::Staking::is_cooperating(&vault) {
                 // Exact after this pallet's own retarget; a slash in between
                 // scales each target down with a floor (energy-generation's
