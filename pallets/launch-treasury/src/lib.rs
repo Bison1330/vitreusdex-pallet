@@ -605,6 +605,18 @@ pub mod pallet {
                 Preserve,
                 Polite,
             );
+            // R8: the broker takes the input with `keep_alive`, so the vault
+            // can part with its reducible LNRG and no more — balance minus
+            // the asset's min balance. A claim that equals the whole balance
+            // (the accumulator attributes without a remainder every so
+            // often) must not ask for the whole balance.
+            let can_part_with = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::reducible_balance(
+                lnrg.clone(),
+                &Self::vault(),
+                Preserve,
+                Polite,
+            );
+            let want = want.min(can_part_with);
             if depth.is_zero() || want.is_zero() {
                 return None;
             }

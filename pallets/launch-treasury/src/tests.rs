@@ -1128,7 +1128,7 @@ fn r4_dust_in_pending_burn_bricks_compound_for_an_active_launch() {
         pay_rewards(10 * UNIT);
         run_to(now() + BURN_INTERVAL);
         assert_ok!(compound(a));
-        assert_eq!(treasury(a).lnrg_accrued, 0);
+        assert!(treasury(a).lnrg_accrued <= 1, "sold, bar the asset's min balance the vault keeps (R8)");
     });
 }
 
@@ -1178,5 +1178,30 @@ fn r7_burn_impact_is_bounded_under_the_venues_round_trip_fee() {
         assert!(vtrs_burned_in <= bound, "slice {vtrs_burned_in} within the venue bound {bound}");
         assert!(vtrs_burned_in > bound * 99 / 100, "and sized to it, not to something smaller");
         assert!(bound < term, "the term (200 bps → {term}) did not apply");
+    });
+}
+
+/// R8 — seen live on 222, the first compound after the R1 recount: the
+/// harvest attributed exactly the vault's whole LNRG balance to the one
+/// launch, the sale asked the broker for all of it with `keep_alive`, and
+/// the broker refused — reducible under `Preserve` is balance minus the
+/// asset's min balance. Every earlier sale had worked only because the
+/// accumulator's floor rounding left a wei behind. The sale must never ask
+/// for more than the vault can part with.
+#[test]
+fn r8_a_sale_never_asks_for_the_vaults_whole_lnrg() {
+    new_test_ext().execute_with(|| {
+        let a = graduated_with_volume(ALICE, 10);
+        assert_ok!(stake(a));
+        fund_broker(10_000 * UNIT);
+        // A reward the accumulator attributes without a remainder: a multiple of the shares.
+        let shares = treasury(a).shares;
+        pay_rewards(shares * 3);
+        run_to(now() + BURN_INTERVAL);
+        let r = compound(a);
+        assert!(r.is_ok(), "the sale must fit what the vault can part with: {:?}", r);
+        assert_eq!(lnrg(vault()), 1, "the asset's min balance stays");
+        assert_eq!(treasury(a).lnrg_accrued, 1, "and is still the launch's");
+        ok_state();
     });
 }

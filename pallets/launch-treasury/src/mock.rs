@@ -536,10 +536,20 @@ impl Swap<Acc> for MockBroker {
         amount_in: u128,
         amount_out_min: Option<u128>,
         send_to: Acc,
-        _keep_alive: bool,
+        keep_alive: bool,
     ) -> Result<u128, DispatchError> {
         if path != vec![NativeOrAssetId::WithId(LNRG_ID), NativeOrAssetId::Native] {
             return Err(err("InvalidPath"));
+        }
+        // The real broker (energy-broker `do_swap`): with `keep_alive` the
+        // sender's reducible balance under `Preserve` must cover the input,
+        // and for a pallet-assets asset that is balance − min_balance. Selling
+        // an account's whole LNRG is `NotExpendable` (R8, seen live on 222).
+        if keep_alive {
+            let reducible = <Assets as frame_support::traits::fungibles::Inspect<Acc>>::reducible_balance(LNRG_ID, &sender, Preservation::Preserve, Fortitude::Polite);
+            if reducible < amount_in {
+                return Err(sp_runtime::TokenError::NotExpendable.into());
+            }
         }
         let out = Self::out_for(amount_in);
         if out == 0 {
@@ -554,7 +564,7 @@ impl Swap<Acc> for MockBroker {
             return Err(err("InsufficientLiquidity"));
         }
         // LNRG sold is burned (the real converter drops the credit); VTRS comes from the broker.
-        Assets::burn_from(LNRG_ID, &sender, amount_in, Preservation::Expendable, Precision::Exact, Fortitude::Polite)?;
+        Assets::burn_from(LNRG_ID, &sender, amount_in, if keep_alive { Preservation::Preserve } else { Preservation::Expendable }, Precision::Exact, Fortitude::Polite)?;
         <Balances as frame_support::traits::fungible::Mutate<Acc>>::transfer(&BROKER, &send_to, out, Preservation::Preserve)?;
         Ok(out)
     }
