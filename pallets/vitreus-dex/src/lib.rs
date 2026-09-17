@@ -285,6 +285,11 @@ pub trait PoolManager<AccountId, AssetKind, Balance, BlockNumber> {
     /// [`PoolInfo`]); `None` if there is no such pool or no native side.
     fn native_reserves(asset: AssetKind) -> Option<(Balance, Balance)>;
 
+    /// The native pool's total swap fee in bps (tier × 10), for a caller
+    /// sizing a trade against the round-trip cost of bracketing it (R7);
+    /// `None` if the pool does not exist.
+    fn fee_bps(asset: AssetKind) -> Option<u16>;
+
     /// D9: the last block a person's swap ran against `asset`'s native
     /// pool (`swap_for` does not count), for the treasury's dormancy rule;
     /// `None` if the pool does not exist.
@@ -2698,6 +2703,11 @@ impl<T: Config> PoolManager<T::AccountId, T::AssetKind, T::Balance, BlockNumberF
             T::Assets::balance(native, &pool.pool_account),
             T::Assets::balance(asset, &pool.pool_account),
         ))
+    }
+
+    fn fee_bps(asset: T::AssetKind) -> Option<u16> {
+        let pair = Self::canonical_pair(<T::NativeAsset as Get<T::AssetKind>>::get(), asset);
+        Pools::<T>::get(&pair).map(|p| (p.fee_tier as u16).saturating_mul(10))
     }
 
     fn last_swap_block(asset: T::AssetKind) -> Option<BlockNumberFor<T>> {

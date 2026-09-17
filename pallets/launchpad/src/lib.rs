@@ -191,6 +191,9 @@ pub trait CurveVenue<AccountId, AssetId, Balance, BlockNumber> {
     /// The curve's virtual reserves `(quote, token)` — what its price is
     /// quoted on — while it is `Trading`; `None` otherwise.
     fn virtual_reserves(launch_id: LaunchId) -> Option<(Balance, Balance)>;
+    /// The curve's trading fee in bps, for a caller sizing a trade against
+    /// the round-trip cost of bracketing it (R7); `None` for no launch.
+    fn fee_bps(launch_id: LaunchId) -> Option<u16>;
     /// Buy with exactly `quote_in` from `who`, who receives the tokens.
     /// Returns the tokens received.
     fn buy_for(
@@ -1114,6 +1117,9 @@ pub mod pallet {
             let tk: u128 = T::VirtualTokenFloor::get().into();
             let tk = tk.checked_add(s.tokens_remaining.into())?;
             Some((q.into(), tk.into()))
+        }
+        fn fee_bps(launch_id: LaunchId) -> Option<u16> {
+            Launches::<T>::get(launch_id).map(|l| l.curve.curve_fee_bps)
         }
         fn buy_for(
             who: &T::AccountId,

@@ -211,7 +211,7 @@ pub struct TreasuryTerms {
 }
 ```
 
-`set_terms(TreasuryTerms)` — `TreasuryManageOrigin`. Bounds: `max_burn_impact_bps ∈ [10, 500]`, `keeper_bounty_bps ≤ 200`, `dormancy_blocks > 0`, `min_stake > 0`; the slices are bounded where they live (`is_valid_default`, `MinProtocolShareBps`). The snapshotted fields follow LAUNCHPAD_SPEC §1.4: a change never touches an existing launch.
+`set_terms(TreasuryTerms)` — `TreasuryManageOrigin`. Bounds: `max_burn_impact_bps ∈ [10, 200]` (a ceiling; the slice is also bounded where it is sized, strictly under the venue's round-trip fee — R7, 2026-09-17), `keeper_bounty_bps ≤ 200`, `dormancy_blocks > 0`, `min_stake > 0`; the slices are bounded where they live (`is_valid_default`, `MinProtocolShareBps`). The snapshotted fields follow LAUNCHPAD_SPEC §1.4: a change never touches an existing launch.
 
 `TreasuryTargets: BoundedVec<AccountId, MaxTreasuryTargets = 16>` — `set_targets` (`TreasuryManageOrigin`). The vault cooperates with every listed validator that passes the pre-flight filter (§6.2), splitting `ledger.active` equally. Live: a change re-cooperates on the next `stake()` or immediately via `retarget()` (anyone; §6.2).
 
@@ -410,7 +410,7 @@ Weights: `stake` = `bond_extra` + `cooperate(K)` + this pallet's writes, `K = Ma
 
 | FM | What | Handled by |
 |---|---|---|
-| FM-T1 | Sandwich around a burn slice | impact cap + interval (§6.4); accepted leak, bounded |
+| FM-T1 | Sandwich around a burn slice | impact cap + interval (§6.4). The cap only bounds a bracket while the slice's impact is under the venue's round-trip fee (the bracket pays the fee twice, the slice moves the price once, `min_out` is 0): modelled, the bracket breaks even at exactly `2 × fee_bps` and is profitable one step above, taking 14 % of a slice at 100 bps on a 0.3 % pool and 73 % at 500. So the slice is sized at `min(term, 2 × venue_fee_bps − 1)` in `burn_slice` (R7); the term is a ceiling, not the guarantee |
 | FM-T2 | Vault below a target's `min_coop_reputation` (a slash): `cooperate` → `ReputationTooLow` | `stake` keeps the bond, emits `StakeRetargetFailed`; `retarget` retried by anyone |
 | FM-T3 | A target chilled, un-collaborative, or its reputation fell | pre-flight filter before `cooperate`; equal split among survivors |
 | FM-T4 | Broker short of VTRS | sell the quotable maximum, keep the rest as `lnrg_accrued`; zero fill is not an error |

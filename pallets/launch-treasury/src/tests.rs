@@ -776,9 +776,10 @@ fn fm_t8_last_retire_chills_first_and_next_stake_recooperates() {
 #[test]
 fn fm_t11_retirement_can_graduate_a_curve() {
     new_test_ext().execute_with(|| {
-        // The widest slice, so the loop is short.
+        // The widest slice, so the loop is short: 200 is the term's ceiling
+        // (R7), and on a 1 % curve the venue bound is 199 bps.
         let mut terms = Terms::<Test>::get();
-        terms.max_burn_impact_bps = 500;
+        terms.max_burn_impact_bps = 200;
         assert_ok!(LaunchTreasury::set_terms(RuntimeOrigin::root(), terms));
 
         // A curve with enough volume to stake, then a payout worth far more
@@ -1139,5 +1140,37 @@ fn r5_one_wei_sent_to_the_vault_fails_try_state_forever() {
         ok_state();
         assert_ok!(Balances::transfer_allow_death(origin(CHARLIE), vault(), 1));
         assert!(LaunchTreasury::do_try_state().is_ok(), "a donation is not an accounting error: {:?}", LaunchTreasury::do_try_state());
+    });
+}
+
+/// R7 — the term is a ceiling, the venue's fee is the bound. Governance
+/// sets the widest impact allowed; on a 0.3 % pool a slice is still sized
+/// at 59 bps of impact (strictly under the 60 bps round trip a bracket
+/// pays), and the modelled bracket P&L at that point is negative on every
+/// venue. Above the round trip it turns positive within one step.
+#[test]
+fn r7_burn_impact_is_bounded_under_the_venues_round_trip_fee() {
+    new_test_ext().execute_with(|| {
+        let mut terms = Terms::<Test>::get();
+        terms.max_burn_impact_bps = 200;
+        assert_ok!(LaunchTreasury::set_terms(RuntimeOrigin::root(), terms.clone()));
+        terms.max_burn_impact_bps = 500;
+        assert_noop!(LaunchTreasury::set_terms(RuntimeOrigin::root(), terms), Error::<Test>::TermsOutOfBounds);
+
+        let a = graduated_with_volume(ALICE, 10);
+        assert_ok!(stake(a));
+        // Enough VTRS waiting to burn that only the cap limits the slice.
+        Treasuries::<Test>::mutate(a, |t| t.as_mut().unwrap().pending_burn = 10_000 * UNIT);
+        assert_ok!(Balances::transfer_allow_death(origin(ALICE), vault(), 10_000 * UNIT));
+        let (reserve, _) = <VitreusDex as pallet_vitreus_dex::PoolManager<Acc, NativeOrAssetId, u128, u64>>::native_reserves(kind(a)).unwrap();
+        run_to(now() + BURN_INTERVAL);
+        assert_ok!(compound(a));
+        let Event::Compounded { vtrs_burned_in, .. } = last_event() else { panic!("Compounded") };
+        let fee_bps = <VitreusDex as pallet_vitreus_dex::PoolManager<Acc, NativeOrAssetId, u128, u64>>::fee_bps(kind(a)).unwrap() as u128;
+        let bound = reserve * (2 * fee_bps - 1) / 20_000;
+        let term = reserve * 200 / 20_000;
+        assert!(vtrs_burned_in <= bound, "slice {vtrs_burned_in} within the venue bound {bound}");
+        assert!(vtrs_burned_in > bound * 99 / 100, "and sized to it, not to something smaller");
+        assert!(bound < term, "the term (200 bps → {term}) did not apply");
     });
 }

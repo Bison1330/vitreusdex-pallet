@@ -448,8 +448,12 @@ pub mod pallet {
             <T as pallet_launchpad::Config>::Treasury::get()
         }
 
+        /// `max_burn_impact_bps` is a ceiling: the slice is also bounded,
+        /// where it is sized, strictly under the venue's round-trip fee
+        /// (R7). 200 is twice the highest launch pool tier; nothing above
+        /// it could ever apply.
         pub fn terms_in_bounds(t: &TreasuryTerms<BalanceOf<T>, BlockNumberFor<T>>) -> bool {
-            (10..=500).contains(&t.max_burn_impact_bps)
+            (10..=200).contains(&t.max_burn_impact_bps)
                 && t.keeper_bounty_bps <= 200
                 && !t.dormancy_blocks.is_zero()
                 && !t.min_stake.is_zero()
@@ -764,6 +768,20 @@ pub mod pallet {
                 Phase::Complete => None,
             };
             let Some(quote_reserve) = quote_reserve else { return Ok(None) };
+            // R7: a slice whose price impact reaches the venue's round-trip
+            // fee is worth bracketing — the bracket pays the fee twice, the
+            // slice moves the price once, and with no `min_out` the slice
+            // takes whatever price the bracket set. The term is a ceiling;
+            // the venue's own fee is the bound, strictly under twice it.
+            let venue_fee_bps: u16 = match phase {
+                Phase::Graduated => <T as pallet_launchpad::Config>::Dex::fee_bps(asset.clone()),
+                _ => <Venue<T> as CurveVenue<_, _, _, _>>::fee_bps(launch_id),
+            }
+            .unwrap_or(0);
+            let impact_bps = impact_bps.min((venue_fee_bps as u32).saturating_mul(2).saturating_sub(1).min(u16::MAX as u32) as u16);
+            if impact_bps == 0 {
+                return Ok(None);
+            }
             let cap = Self::mul_div(quote_reserve, (impact_bps as u128).into(), (2 * BPS as u128).into())?;
             let y = pending.min(cap);
             if y.is_zero() {
