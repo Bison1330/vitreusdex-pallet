@@ -1492,14 +1492,18 @@ fn l2_buy_for_runs_the_hook_and_can_graduate() {
         let t = terms(id);
         assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::virtual_reserves(id), Some((t.virtual_quote, t.token_floor + SELLABLE)));
 
-        // An in-runtime buy is an ordinary buy: the hook saw it, the buyer got the tokens.
+        // An in-runtime buy is an ordinary buy for the curve — the hook saw
+        // it, the buyer got the tokens — but not for the dormancy clock: it
+        // is the treasury buying the token back, not a person trading it (R2).
         System::set_block_number(3);
         let before = HOOK_CALLS.with(|c| c.borrow().len());
         let got = <Venue as CurveVenue<Acc, u128, u128, u64>>::buy_for(&BOB, id, 10 * UNIT, 0).unwrap();
         assert_eq!(tok(id, BOB), got);
         assert!(got > 0);
         assert_eq!(HOOK_CALLS.with(|c| c.borrow().len()), before + 1);
-        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::last_trade_block(id), Some(3));
+        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::last_trade_block(id), Some(1), "buy_for does not move the clock");
+        assert_ok!(Launchpad::buy(RuntimeOrigin::signed(BOB), id, UNIT, 0));
+        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::last_trade_block(id), Some(3), "a person's buy does");
         // Slippage binds like the extrinsic's.
         assert_noop!(
             <Venue as CurveVenue<Acc, u128, u128, u64>>::buy_for(&BOB, id, 10 * UNIT, u128::MAX / 4),

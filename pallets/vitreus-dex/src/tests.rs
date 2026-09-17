@@ -2071,15 +2071,19 @@ fn d9_swap_for_native_reserves_and_last_swap_block() {
         assert_eq!(<VitreusDex as PoolManager<u128, NativeOrAssetId, u128, u64>>::last_swap_block(launch()), Some(0), "a pool that never traded reads as block 0");
         assert_eq!(<VitreusDex as PoolManager<u128, NativeOrAssetId, u128, u64>>::last_swap_block(usdc()), None);
 
-        // The in-runtime swap is the extrinsic's body: same output, same routing, delivered to `who`.
+        // The in-runtime swap is the extrinsic's body — same output, same
+        // routing, delivered to `who` — except for the dormancy clock: it is
+        // the treasury buying the token back, not a person trading it (R2).
         System::set_block_number(7);
         let amount_in = 10 * UNIT;
         let before = Assets::balance(LAUNCH_ID, BOB);
         let out = <VitreusDex as PoolManager<u128, NativeOrAssetId, u128, u64>>::swap_for(&BOB, native(), launch(), amount_in, 0).unwrap();
         assert_eq!(Assets::balance(LAUNCH_ID, BOB) - before, out);
         assert_eq!(Balances::free_balance(VAULT), amount_in * 10 / 10_000);
-        assert_eq!(LastSwapBlock::<Test>::get(key), Some(7));
-        assert_eq!(<VitreusDex as PoolManager<u128, NativeOrAssetId, u128, u64>>::last_swap_block(launch()), Some(7));
+        assert_eq!(LastSwapBlock::<Test>::get(&key), None, "swap_for does not move the clock");
+        assert_eq!(<VitreusDex as PoolManager<u128, NativeOrAssetId, u128, u64>>::last_swap_block(launch()), Some(0));
+        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(RuntimeOrigin::signed(BOB), native(), launch(), amount_in, 0, BOB));
+        assert_eq!(LastSwapBlock::<Test>::get(&key), Some(7), "a person's swap does");
         // Slippage still binds.
         assert_noop!(
             <VitreusDex as PoolManager<u128, NativeOrAssetId, u128, u64>>::swap_for(&BOB, native(), launch(), amount_in, u128::MAX / 4),

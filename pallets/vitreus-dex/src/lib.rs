@@ -270,7 +270,8 @@ pub trait PoolManager<AccountId, AssetKind, Balance, BlockNumber> {
     /// D9: swap exactly `amount_in` of `asset_in` for `asset_out` on behalf
     /// of `who`, delivering to `who`. The extrinsic's body without the
     /// origin check, for a pallet that owns `who` (the launch treasury's
-    /// buy-and-burn). Returns the amount out.
+    /// buy-and-burn). Returns the amount out. Not a trade for
+    /// [`PoolManager::last_swap_block`]: that clock is for people (R2).
     fn swap_for(
         who: &AccountId,
         asset_in: AssetKind,
@@ -284,8 +285,9 @@ pub trait PoolManager<AccountId, AssetKind, Balance, BlockNumber> {
     /// [`PoolInfo`]); `None` if there is no such pool or no native side.
     fn native_reserves(asset: AssetKind) -> Option<(Balance, Balance)>;
 
-    /// D9: the last block a swap ran against `asset`'s native pool, for the
-    /// treasury's dormancy rule; `None` if the pool does not exist.
+    /// D9: the last block a person's swap ran against `asset`'s native
+    /// pool (`swap_for` does not count), for the treasury's dormancy rule;
+    /// `None` if the pool does not exist.
     fn last_swap_block(asset: AssetKind) -> Option<BlockNumber>;
 }
 
@@ -1072,7 +1074,7 @@ pub mod pallet {
             recipient: T::AccountId,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-            Self::do_swap(&who, asset_in, asset_out, amount_in, amount_out_min, &recipient)?;
+            Self::do_swap(&who, asset_in, asset_out, amount_in, amount_out_min, &recipient, true)?;
             Ok(())
         }
 
@@ -1441,6 +1443,7 @@ pub mod pallet {
                 intent.amount_in,
                 commitment.committed_amount_out,
                 &intent_escrow,
+                true,
             )?;
 
             // Slippage capture: do_swap guarantees actual_out >= committed_amount_out.
@@ -2357,6 +2360,12 @@ pub mod pallet {
         /// loads the pool, syncs reserves, computes constant-product output, applies
         /// fee, performs transfers, updates storage, emits `SwapExecuted` and
         /// `FeesCollected`.
+        /// `is_trade`: whether this swap counts as market activity for
+        /// `LastSwapBlock`. A person's swap and a settled intent do; the
+        /// launch treasury's buyback through [`PoolManager::swap_for`] does
+        /// not — the dormancy rule that reads it asks whether anyone still
+        /// trades the token, and the pallet buying it back is not an
+        /// answer (R2).
         pub(crate) fn do_swap(
             who: &T::AccountId,
             asset_in: T::AssetKind,
@@ -2364,6 +2373,7 @@ pub mod pallet {
             amount_in: T::Balance,
             amount_out_min: T::Balance,
             recipient: &T::AccountId,
+            is_trade: bool,
         ) -> Result<T::Balance, DispatchError> {
             ensure!(amount_in > Zero::zero(), Error::<T>::ZeroAmount);
 
@@ -2541,7 +2551,9 @@ pub mod pallet {
 
             let pool_account_for_event = pool.pool_account.clone();
             Pools::<T>::insert(&pair, pool);
-            LastSwapBlock::<T>::insert(&pair, frame_system::Pallet::<T>::block_number());
+            if is_trade {
+                LastSwapBlock::<T>::insert(&pair, frame_system::Pallet::<T>::block_number());
+            }
 
             Self::deposit_event(Event::SwapExecuted {
                 who: who.clone(),
@@ -2664,7 +2676,9 @@ impl<T: Config> PoolManager<T::AccountId, T::AssetKind, T::Balance, BlockNumberF
         amount_in: T::Balance,
         amount_out_min: T::Balance,
     ) -> Result<T::Balance, DispatchError> {
-        Self::do_swap(who, asset_in, asset_out, amount_in, amount_out_min, who)
+        // An in-runtime swap on a token's behalf is not a trade for the
+        // dormancy clock (R2).
+        Self::do_swap(who, asset_in, asset_out, amount_in, amount_out_min, who, false)
     }
 
     fn native_reserves(asset: T::AssetKind) -> Option<(T::Balance, T::Balance)> {

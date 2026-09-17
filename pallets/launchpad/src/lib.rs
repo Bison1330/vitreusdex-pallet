@@ -524,7 +524,7 @@ pub mod pallet {
             // 8. optional atomic first buy. Charged as a crossing buy up front;
             // refunded to a plain buy when the curve was not exhausted.
             if !initial_buy.is_zero() {
-                let (crossed, _) = Self::do_buy(&creator, id, initial_buy, min_tokens_out, true)?;
+                let (crossed, _) = Self::do_buy(&creator, id, initial_buy, min_tokens_out, true, true)?;
                 if !crossed {
                     let w = <T as Config>::WeightInfo::create_launch(name.len() as u32, symbol.len() as u32, d, u)
                         .saturating_add(<T as Config>::WeightInfo::buy());
@@ -547,7 +547,7 @@ pub mod pallet {
         ) -> DispatchResultWithPostInfo {
             let who = ensure_signed(origin)?;
             let launch = Launches::<T>::get(launch_id).ok_or(Error::<T>::LaunchNotFound)?;
-            let (crossed, _) = Self::do_buy(&who, launch_id, quote_in, min_tokens_out, who == launch.creator)?;
+            let (crossed, _) = Self::do_buy(&who, launch_id, quote_in, min_tokens_out, who == launch.creator, true)?;
             Ok(if crossed { None } else { Some(<T as Config>::WeightInfo::buy()) }.into())
         }
 
@@ -877,13 +877,19 @@ pub mod pallet {
 
         /// §2.2 body. Single choke point for every buy. Returns whether the
         /// buy exhausted the curve (and therefore attempted the seed), and
-        /// the tokens delivered.
+        /// the tokens delivered. `is_trade` says whether this buy counts as
+        /// market activity for `last_trade_block`: a person's buy does, the
+        /// treasury's own buyback through [`CurveVenue::buy_for`] does not —
+        /// the dormancy rule that reads the field asks whether anyone is
+        /// still interested in the token, and the pallet buying it back is
+        /// not an answer (R2).
         pub fn do_buy(
             who: &T::AccountId,
             launch_id: LaunchId,
             quote_in: BalanceOf<T>,
             min_tokens_out: BalanceOf<T>,
             is_creator: bool,
+            is_trade: bool,
         ) -> Result<(bool, BalanceOf<T>), DispatchError> {
             let launch = Launches::<T>::get(launch_id).ok_or(Error::<T>::LaunchNotFound)?;
             let mut state = Curves::<T>::get(launch_id).ok_or(Error::<T>::LaunchNotFound)?;
@@ -916,7 +922,9 @@ pub mod pallet {
             state.creator_fees_unclaimed = state.creator_fees_unclaimed.saturating_add(creator.into());
             state.protocol_fees_paid = state.protocol_fees_paid.saturating_add(protocol);
             state.treasury_fees_paid = state.treasury_fees_paid.saturating_add(treasury_part);
-            state.last_trade_block = now;
+            if is_trade {
+                state.last_trade_block = now;
+            }
             // curve state
             state.real_quote = state.real_quote.saturating_add(q.quote_net_used.into());
             state.tokens_remaining = state
@@ -1114,7 +1122,9 @@ pub mod pallet {
             min_tokens_out: BalanceOf<T>,
         ) -> Result<BalanceOf<T>, DispatchError> {
             let launch = Launches::<T>::get(launch_id).ok_or(Error::<T>::LaunchNotFound)?;
-            let (_, tokens_out) = Self::do_buy(who, launch_id, quote_in, min_tokens_out, *who == launch.creator)?;
+            // An in-runtime buy on the token's behalf is not a trade for the
+            // dormancy clock (R2).
+            let (_, tokens_out) = Self::do_buy(who, launch_id, quote_in, min_tokens_out, *who == launch.creator, false)?;
             Ok(tokens_out)
         }
     }

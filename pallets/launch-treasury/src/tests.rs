@@ -1032,6 +1032,20 @@ fn r2_the_treasurys_own_buybacks_reset_the_dormancy_clock() {
         assert_ok!(compound(a));
         run_to(last_user_trade + DORMANCY + 1);
         assert!(retire(a).is_ok(), "no user has traded for a full dormancy window; the pallet's own buyback is not a trade: {:?}", retire(a));
+
+        // The curve venue, the same way.
+        let b = create(BOB);
+        buy(CHARLIE, b, 1_000 * UNIT);
+        assert_ok!(stake(b));
+        let last_user_trade = LaunchTreasury::last_trade_block(b).unwrap();
+        pay_rewards(10 * UNIT);
+        run_to(now() + BURN_INTERVAL);
+        assert_ok!(compound(b));
+        let Event::Compounded { tokens_burned, .. } = last_event() else { panic!("Compounded") };
+        assert!(tokens_burned > 0, "the buyback bought on the curve");
+        assert_eq!(LaunchTreasury::last_trade_block(b), Some(last_user_trade), "and did not move the clock");
+        run_to(last_user_trade + DORMANCY + 1);
+        assert!(retire(b).is_ok(), "{:?}", retire(b));
     });
 }
 

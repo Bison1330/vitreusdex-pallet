@@ -419,7 +419,7 @@ Weights: `stake` = `bond_extra` + `cooperate(K)` + this pallet's writes, `K = Ma
 | FM-T7 | 64 unbonding chunks outstanding | `retire` fails `NoMoreChunks`; retry after a `finalize` |
 | FM-T8 | Last active launch retires; `unbond` would leave `active < MinCooperatorBond` | `retire` dispatches `chill` first; next `stake` re-cooperates; the ledger is read, never cached |
 | FM-T9 | Retired token revives | slice goes to protocol forever; disclosed on the token page |
-| FM-T10 | Wash trade to keep a treasury from dormancy | harmless; the attacker pays 30 bps to keep yield flowing to a token they hold |
+| FM-T10 | Wash trade to keep a treasury from dormancy | harmless; the attacker pays 30 bps to keep yield flowing to a token they hold. The pallet's own buybacks (`buy_for`, `swap_for`) do not move either venue's last-trade block — before R2 (2026-09-17) they did, and a funded launch with a keeper could never become dormant |
 | FM-T11 | Retirement burns graduate a dead curve | intended (§2.4.3): treasury VTRS becomes locked depth holders can sell into |
 
 ### 8.3 Decided: the slash-deferral asymmetry is accepted
