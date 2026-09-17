@@ -818,7 +818,8 @@ pub mod pallet {
                 Ok(t) => t,
                 Err(e)
                     if e == DispatchError::from(pallet_launchpad::Error::<T>::Unquotable)
-                        || e == DispatchError::from(pallet_launchpad::Error::<T>::ZeroAmount) =>
+                        || e == DispatchError::from(pallet_launchpad::Error::<T>::ZeroAmount)
+                        || e == DispatchError::from(pallet_vitreus_dex::Error::<T>::ZeroAmount) =>
                 {
                     return Ok(None)
                 },

@@ -2503,6 +2503,10 @@ pub mod pallet {
             };
 
             ensure!(amount_out >= amount_out_min, Error::<T>::SlippageExceeded);
+            // R10: an input so small its output rounds to nothing is refused
+            // here, not by pallet-assets declining to open the recipient's
+            // token account with a zero balance (`BelowMinimum`).
+            ensure!(!amount_out.is_zero(), Error::<T>::ZeroAmount);
             ensure!(amount_out_gross < reserve_out, Error::<T>::InsufficientLiquidity);
 
             T::Assets::transfer(

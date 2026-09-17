@@ -1237,3 +1237,23 @@ fn r9_a_swap_of_ones_whole_balance_keeps_the_ed_instead_of_failing() {
         assert_eq!(vtrs(&dave), ED, "and nothing moved");
     });
 }
+
+/// R10 — found by the fuzzer: a swap whose output rounds to zero. `do_swap`
+/// computed `amount_out = 0` for 1 wei into a nearly drained pool and went
+/// on to transfer it, and pallet-assets refused to open the buyer's token
+/// account with nothing in it — `Token(BelowMinimum)`, from the wrong
+/// pallet, for "you would get nothing". Say `ZeroAmount` before anything moves.
+#[test]
+fn r10_a_swap_that_would_deliver_nothing_says_so() {
+    new_test_ext().execute_with(|| {
+        let a = graduated_with_volume(ALICE, 0);
+        // Drain the pool's token side: a buy of 774,000 VTRS leaves under a
+        // millionth of the tokens, so 1 wei buys 0.99 of a unit.
+        pool_buy(ALICE, a, 774_000 * UNIT);
+        let dave: Acc = sp_runtime::AccountId32::new([5u8; 32]);
+        assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave.clone(), UNIT));
+        let r = VitreusDex::swap_exact_tokens_for_tokens(origin(&dave), NativeOrAssetId::Native, kind(a), 1, 0, dave.clone());
+        assert_eq!(r, Err(pallet_vitreus_dex::Error::<Test>::ZeroAmount.into()), "nothing would be delivered: {:?}", r);
+        assert_eq!(vtrs(&dave), UNIT, "and nothing moved");
+    });
+}
