@@ -974,3 +974,156 @@ fn stake_refuses_when_the_vault_is_fully_slashed() {
         ok_state();
     });
 }
+
+// ---- adversarial review, 2026-09-17: red tests --------------------------
+//
+// Each of these encodes a finding from the review pass, not a spec test.
+// They are expected to FAIL on this commit; a fix turns them green.
+
+/// R1 — a sale never lowers `LnrgAccounted`, so the next `x` LNRG of
+/// rewards after selling `x` are attributed to nobody: `harvest` sees
+/// `balance ≤ accounted` and returns nothing until cumulative new rewards
+/// exceed what was sold. The LNRG stays in the vault, owned by no launch,
+/// forever. In steady state (sell whenever anything accrued) half the
+/// yield is never attributed.
+#[test]
+fn r1_rewards_after_a_sale_are_attributed_to_nobody() {
+    new_test_ext().execute_with(|| {
+        let a = graduated_with_volume(ALICE, 10);
+        assert_ok!(stake(a));
+        fund_broker(10_000 * UNIT);
+        pay_rewards(100 * UNIT);
+        assert_ok!(LaunchTreasury::harvest(origin(KEEPER)));
+        run_to(now() + BURN_INTERVAL);
+        assert_ok!(compound(a));
+        assert_eq!(treasury(a).lnrg_accrued, 0, "everything sold");
+        assert!(lnrg(vault()) < 100, "the vault holds only accumulator dust");
+
+        // The next era pays the same again. It is real LNRG in the vault…
+        pay_rewards(100 * UNIT);
+        assert_eq!(lnrg(vault()), 100 * UNIT + lnrg(vault()) % UNIT);
+        // …and nobody is owed it.
+        let r = LaunchTreasury::harvest(origin(KEEPER));
+        assert_ok!(r);
+        assert!(
+            LaunchTreasury::claimable_lnrg(a).unwrap() >= 100 * UNIT - 100,
+            "a second era's rewards must be claimable by the only launch; claimable = {}",
+            LaunchTreasury::claimable_lnrg(a).unwrap()
+        );
+    });
+}
+
+/// R2 — the treasury's own burn slice is a trade on the venue: `buy_for`
+/// runs `do_buy`, which writes `last_trade_block`; the DEX's `swap_for`
+/// writes `LastSwapBlock`. A funded launch that nobody trades never
+/// becomes dormant while its yield keeps compounding, so `retire` is
+/// unreachable for exactly the launches it was designed for.
+#[test]
+fn r2_the_treasurys_own_buybacks_reset_the_dormancy_clock() {
+    new_test_ext().execute_with(|| {
+        let a = graduated_with_volume(ALICE, 10);
+        assert_ok!(stake(a));
+        fund_broker(10_000 * UNIT);
+        let last_user_trade = LaunchTreasury::last_trade_block(a).unwrap();
+        // Yield arrives and is compounded well inside the dormancy window,
+        // then the venue is quiet for the whole window. No user trades.
+        pay_rewards(10 * UNIT);
+        run_to(last_user_trade + BURN_INTERVAL);
+        assert_ok!(compound(a));
+        run_to(last_user_trade + DORMANCY + 1);
+        assert!(retire(a).is_ok(), "no user has traded for a full dormancy window; the pallet's own buyback is not a trade: {:?}", retire(a));
+    });
+}
+
+/// R3 — after a retired treasury closes (`Treasuries::remove`), the pallet
+/// cannot tell it from a launch never funded: `account_for` answers the
+/// vault again, the next fee creates a fresh `Active` record, and the
+/// launch has a treasury again. I-T5 says Retired never returns to Active
+/// and the site says "its slice goes to the protocol forever".
+#[test]
+fn r3_a_closed_treasury_is_reopened_by_the_next_fee() {
+    new_test_ext().execute_with(|| {
+        let a = graduated_with_volume(ALICE, 10);
+        assert_ok!(stake(a));
+        run_to(now() + DORMANCY);
+        assert_ok!(retire(a));
+        MockStaking::set_era(10 + BONDING_DURATION);
+        assert_ok!(finalize(a));
+        let mut slices = 0;
+        while Treasuries::<Test>::get(a).is_some() && slices < 10_000 {
+            run_to(now() + BURN_INTERVAL);
+            assert_ok!(compound(a));
+            slices += 1;
+        }
+        assert!(Treasuries::<Test>::get(a).is_none(), "closed");
+
+        // The token revives.
+        let proto_before = ProtocolFeesUnclaimed::<Test>::get();
+        pool_buy(CHARLIE, a, 100 * UNIT);
+        assert_eq!(
+            ProtocolFeesUnclaimed::<Test>::get() - proto_before,
+            100 * UNIT * 15 / 10_000,
+            "a retired launch's slice folds into the protocol share forever (FM-T9)"
+        );
+        assert!(Treasuries::<Test>::get(a).is_none(), "retirement is one-way: no new record");
+    });
+}
+
+/// R4 — `pending_burn` dust on an *Active* curve launch. The Retired path
+/// sweeps a remainder below ED; the Active path tries to buy with it, the
+/// curve says `Unquotable` (a 1 % fee rounds a sub-100-wei buy to
+/// nothing), the error propagates, and the whole `compound` reverts — the
+/// sale in the same call included. Reachable when a sale realises under
+/// 100 wei (a 1-wei LNRG remainder from the accumulator's rounding, at a
+/// broker rate under 100 VTRS per LNRG); it heals itself once a later
+/// sale adds enough to the same `pending_burn`, and never heals if no
+/// more yield comes. Low, and the fix is a line: treat an unquotable
+/// slice as "nothing to burn" instead of an error.
+#[test]
+fn r4_dust_in_pending_burn_bricks_compound_for_an_active_launch() {
+    new_test_ext().execute_with(|| {
+        let a = create(ALICE);
+        buy(BOB, a, 1_000 * UNIT);
+        assert_ok!(stake(a));
+        fund_broker(10_000 * UNIT);
+        // 1 wei waiting to burn: what a 1-wei LNRG sale realises at a rate
+        // under 100 VTRS/LNRG (the accumulator leaves 1-wei remainders).
+        // Under 100 wei the curve's fee rounds the buy to nothing.
+        Treasuries::<Test>::mutate(a, |t| t.as_mut().unwrap().pending_burn = 1);
+        // Keep I-T1 honest about it.
+        assert_ok!(Balances::transfer_allow_death(origin(ALICE), vault(), 1));
+        run_to(now() + BURN_INTERVAL);
+        // Nothing to sell, one unquotable wei to burn: the call should be a
+        // no-op (`NothingToDo`, which a keeper's predicate understands), not
+        // an error it retries at every interval.
+        let r = compound(a);
+        assert!(
+            r == Err(Error::<Test>::NothingToDo.into()) || r.is_ok(),
+            "an unquotable slice is not an error of compound; got {:?}",
+            r
+        );
+        // And once there is something to sell, the sale must go through with
+        // the dust still there.
+        pay_rewards(10 * UNIT);
+        run_to(now() + BURN_INTERVAL);
+        assert_ok!(compound(a));
+        assert_eq!(treasury(a).lnrg_accrued, 0);
+    });
+}
+
+/// R5 — I-T1 is checked as strict equality on an account anyone can send
+/// VTRS to. One wei sent to the vault makes `try_state` fail on every
+/// block from then on, for as long as the chain lives: nothing accounts
+/// for the wei, nothing sweeps it, and no call can. An invariant a
+/// stranger can break for the price of a transfer is a griefing handle on
+/// whatever gates on `try-runtime` (upgrade rehearsals, CI).
+#[test]
+fn r5_one_wei_sent_to_the_vault_fails_try_state_forever() {
+    new_test_ext().execute_with(|| {
+        let a = graduated_with_volume(ALICE, 3);
+        assert_ok!(stake(a));
+        ok_state();
+        assert_ok!(Balances::transfer_allow_death(origin(CHARLIE), vault(), 1));
+        assert!(LaunchTreasury::do_try_state().is_ok(), "a donation is not an accounting error: {:?}", LaunchTreasury::do_try_state());
+    });
+}

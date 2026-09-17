@@ -921,3 +921,35 @@ fn end_to_end_two_solvers_overbid_settle() {
         assert_eq!(bob.active_commitments, 0);
     });
 }
+
+// ---- adversarial review, 2026-09-17: red test ------------------------------
+
+/// R6 — a solver raising its own bid. `commit_fill` decrements the
+/// displaced solver's `active_commitments` from a fresh storage read, then
+/// writes the caller's record back from the copy it loaded at the top, plus
+/// one. When displaced and caller are the same solver the decrement is
+/// overwritten: the count rises by one per self-overbid and never comes
+/// down, and `deregister_solver` (which requires zero) can never refund
+/// the bond. A legitimate action locks 1,000 VTRS forever.
+#[test]
+fn r6_a_solver_raising_its_own_bid_locks_its_bond_forever() {
+    new_test_ext().execute_with(|| {
+        register_solver_for(BOB);
+        assert_ok!(VitreusDex::submit_intent(
+            RuntimeOrigin::signed(ALICE),
+            usdc(),
+            NativeOrAssetId::Native,
+            10_000,
+            9_000,
+            System::block_number() + 100,
+        ));
+        assert_ok!(VitreusDex::commit_fill(RuntimeOrigin::signed(BOB), 0, 9_500));
+        assert_ok!(VitreusDex::commit_fill(RuntimeOrigin::signed(BOB), 0, 9_700));
+        assert_eq!(Solvers::<Test>::get(0).expect("present").active_commitments, 1, "one intent, one commitment");
+        // The intent goes away without Bob settling: Alice's deadline passes
+        // and Bob is slashed, which is the path that must leave him at zero.
+        System::set_block_number(System::block_number() + 200);
+        assert_ok!(VitreusDex::slash_solver(RuntimeOrigin::signed(CHARLIE), 0));
+        assert_eq!(Solvers::<Test>::get(0).expect("present").active_commitments, 0, "nothing committed after the slash");
+    });
+}
