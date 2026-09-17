@@ -232,7 +232,10 @@ pub mod pallet {
     #[pallet::storage]
     pub type LnrgPerShare<T: Config> = StorageValue<_, u128, ValueQuery>;
 
-    /// LNRG the accumulator has distributed; `harvest` attributes `balance − this`.
+    /// LNRG in the vault that the accumulator has already attributed:
+    /// `harvest` attributes `balance − this`, and a sale lowers it by what
+    /// left (R1: a sale that did not lower it made the next equal amount
+    /// of rewards unattributable). `Σ claims ≤ this ≤ balance` always.
     #[pallet::storage]
     pub type LnrgAccounted<T: Config> = StorageValue<_, BalanceOf<T>, ValueQuery>;
 
@@ -643,6 +646,10 @@ pub mod pallet {
                     true,
                 )?;
                 t.lnrg_accrued = t.lnrg_accrued.saturating_sub(x);
+                // What left the vault was attributed LNRG: the accumulator's
+                // baseline follows it down, so the next rewards are `balance −
+                // accounted` again and not `balance − (accounted + x)`.
+                LnrgAccounted::<T>::mutate(|a| *a = a.saturating_sub(x));
                 lnrg_sold = x;
                 realised = out;
                 bounty = Self::mul_div(out, (terms.keeper_bounty_bps as u128).into(), (BPS as u128).into())?;
@@ -915,6 +922,17 @@ pub mod pallet {
                 shares = shares.saturating_add(t.shares);
             }
             frame_support::ensure!(shares == TotalShares::<T>::get(), "I-T2: shares");
+            // I-T2, the LNRG half: every launch's claim is backed by attributed
+            // LNRG, and attributed LNRG is in the vault. A sale that lowered the
+            // balance without lowering `LnrgAccounted` breaks the right-hand side.
+            let mut claims = BalanceOf::<T>::zero();
+            for (id, _) in Treasuries::<T>::iter() {
+                claims = claims.saturating_add(Self::claimable_lnrg(id).unwrap_or_default());
+            }
+            let accounted = LnrgAccounted::<T>::get();
+            let lnrg = Self::assets_balance(T::LnrgAsset::get(), &vault);
+            frame_support::ensure!(claims <= accounted, "I-T2: claims exceed LnrgAccounted");
+            frame_support::ensure!(accounted <= lnrg, "I-T2: LnrgAccounted exceeds the vault's LNRG");
             // The ED buffer is there once the upgrade or the first fee put it
             // there (§9.6); before that the vault holds nothing unaccounted.
             let ed = if VaultFunded::<T>::get() {
