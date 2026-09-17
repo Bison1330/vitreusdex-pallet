@@ -509,6 +509,7 @@ pub mod pallet {
             let w = <T as Config>::WeightInfo::create_launch(name.len() as u32, symbol.len() as u32, d, u);
             if initial_buy.is_zero() { w } else { w.saturating_add(<T as Config>::WeightInfo::buy_crossing()) }
         })]
+        #[allow(clippy::too_many_arguments)] // the call's signature is the interface
         pub fn create_launch(
             origin: OriginFor<T>,
             name: BoundedVec<u8, T::StringLimit>,

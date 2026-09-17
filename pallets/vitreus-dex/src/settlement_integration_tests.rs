@@ -694,7 +694,7 @@ fn slash_solver_happy_path_pays_slasher_and_refunds_user() {
         ));
         assert_ok!(VitreusDex::commit_fill(RuntimeOrigin::signed(BOB), 0, 9_500));
 
-        let alice_usdc_before = pallet_assets::Pallet::<Test>::balance(USDC_ID, &ALICE);
+        let alice_usdc_before = pallet_assets::Pallet::<Test>::balance(USDC_ID, ALICE);
         let charlie_native_before = pallet_balances::Pallet::<Test>::free_balance(CHARLIE);
 
         let now = System::block_number();
@@ -709,7 +709,7 @@ fn slash_solver_happy_path_pays_slasher_and_refunds_user() {
         assert_eq!(bob.fills_slashed, 1);
         assert_eq!(bob.active_commitments, 0);
 
-        let alice_usdc_after = pallet_assets::Pallet::<Test>::balance(USDC_ID, &ALICE);
+        let alice_usdc_after = pallet_assets::Pallet::<Test>::balance(USDC_ID, ALICE);
         assert_eq!(alice_usdc_after - alice_usdc_before, 10_000);
 
         // 10% of 1_000_000_000_000 bond.
@@ -784,13 +784,13 @@ fn refund_expired_intent_works_if_never_committed() {
             System::block_number() + 5,
         ));
 
-        let alice_usdc_before = pallet_assets::Pallet::<Test>::balance(USDC_ID, &ALICE);
+        let alice_usdc_before = pallet_assets::Pallet::<Test>::balance(USDC_ID, ALICE);
 
         System::set_block_number(System::block_number() + 10);
 
         assert_ok!(VitreusDex::refund_expired_intent(RuntimeOrigin::signed(ALICE), 0));
 
-        let alice_usdc_after = pallet_assets::Pallet::<Test>::balance(USDC_ID, &ALICE);
+        let alice_usdc_after = pallet_assets::Pallet::<Test>::balance(USDC_ID, ALICE);
         assert_eq!(alice_usdc_after - alice_usdc_before, 10_000);
 
         let intent = Intents::<Test>::get(0).expect("present");

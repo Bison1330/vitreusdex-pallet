@@ -756,7 +756,7 @@ fn check_all(op: &Op, before: &Before) -> Result<(), String> {
     let issuance = Balances::total_issuance();
     let named: u128 = named_accounts()
         .iter()
-        .map(|a| <Balances as frame_support::traits::Currency<Acc>>::total_balance(a))
+        .map(<Balances as frame_support::traits::Currency<Acc>>::total_balance)
         .sum();
     if named != issuance {
         return Err(format!(
@@ -787,7 +787,7 @@ fn summary() -> String {
         MockStaking::current_era(),
         free(&vault()),
         MockStaking::active(&vault()),
-        Assets::balance(LNRG_ID, &vault()),
+        Assets::balance(LNRG_ID, vault()),
         LnrgAccounted::<Test>::get(),
         TotalShares::<Test>::get()
     ));
@@ -838,15 +838,9 @@ fn run_sequence(ops: &[Op]) -> Result<(), String> {
     );
     for (i, op) in ops.iter().enumerate() {
         let before = snapshot();
-        if let Some(res) = run(op) {
-            if let Err(e) = res {
-                if !expected(op, &e) {
-                    return Err(format!(
-                        "step {}: {op:?} → unexpected {e:?}\n{}",
-                        i + 1,
-                        summary()
-                    ));
-                }
+        if let Some(Err(e)) = run(op) {
+            if !expected(op, &e) {
+                return Err(format!("step {}: {op:?} → unexpected {e:?}\n{}", i + 1, summary()));
             }
         }
         check_all(op, &before)

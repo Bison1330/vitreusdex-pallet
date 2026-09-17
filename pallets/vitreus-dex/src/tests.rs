@@ -293,8 +293,8 @@ fn do_add_liquidity_for_direct_credits_who_and_returns_shares() {
     new_test_ext().execute_with(|| {
         assert_ok!(VitreusDex::do_create_pool(usdc(), vnrg(), 10));
 
-        let bob_usdc_before = Assets::balance(USDC_ID, &BOB);
-        let bob_vnrg_before = Assets::balance(VNRG_ID, &BOB);
+        let bob_usdc_before = Assets::balance(USDC_ID, BOB);
+        let bob_vnrg_before = Assets::balance(VNRG_ID, BOB);
 
         // First deposit: sqrt(10_000 * 40_000) = 20_000 total, 1_000 locked.
         let minted = VitreusDex::do_add_liquidity_for(&BOB, usdc(), vnrg(), 10_000, 40_000, 0, 0)
@@ -302,9 +302,9 @@ fn do_add_liquidity_for_direct_credits_who_and_returns_shares() {
         assert_eq!(minted, 19_000);
 
         // Tokens came out of `who`, not the caller/anyone else.
-        assert_eq!(Assets::balance(USDC_ID, &BOB), bob_usdc_before - 10_000);
-        assert_eq!(Assets::balance(VNRG_ID, &BOB), bob_vnrg_before - 40_000);
-        assert_eq!(Assets::balance(USDC_ID, &ALICE), 1_000_000);
+        assert_eq!(Assets::balance(USDC_ID, BOB), bob_usdc_before - 10_000);
+        assert_eq!(Assets::balance(VNRG_ID, BOB), bob_vnrg_before - 40_000);
+        assert_eq!(Assets::balance(USDC_ID, ALICE), 1_000_000);
 
         let pos = LiquidityPositions::<Test>::get(BOB, pair()).expect("position");
         assert_eq!(pos.shares, 19_000);
@@ -1759,11 +1759,11 @@ fn d6_add_liquidity_cannot_capture_unsynced_fees() {
         let pool = Pools::<Test>::get(pair()).unwrap();
         assert_eq!(pool.reserve_a, 10_990);
         assert_eq!(pool.reserve_b, 36_397);
-        assert_eq!(Assets::balance(USDC_ID, &pool_account), 11_000);
+        assert_eq!(Assets::balance(USDC_ID, pool_account), 11_000);
 
         // Bob deposits at the recorded ratio and immediately withdraws.
-        let bob_usdc_before = Assets::balance(USDC_ID, &BOB);
-        let bob_vnrg_before = Assets::balance(VNRG_ID, &BOB);
+        let bob_usdc_before = Assets::balance(USDC_ID, BOB);
+        let bob_vnrg_before = Assets::balance(VNRG_ID, BOB);
         assert_ok!(VitreusDex::add_liquidity(
             RuntimeOrigin::signed(BOB),
             usdc(),
@@ -1775,7 +1775,7 @@ fn d6_add_liquidity_cannot_capture_unsynced_fees() {
         ));
         let recorded_after_add = Pools::<Test>::get(pair()).unwrap();
         let held_after_add =
-            (Assets::balance(USDC_ID, &pool_account), Assets::balance(VNRG_ID, &pool_account));
+            (Assets::balance(USDC_ID, pool_account), Assets::balance(VNRG_ID, pool_account));
 
         let bob_shares = LiquidityPositions::<Test>::get(BOB, pair()).unwrap().shares;
         assert_ok!(VitreusDex::remove_liquidity(
@@ -1788,11 +1788,11 @@ fn d6_add_liquidity_cannot_capture_unsynced_fees() {
         ));
         // Floor rounding is in the pool's favour on both legs: Bob gets back
         // at most what he put in, never a slice of Alice's fees.
-        assert!(Assets::balance(USDC_ID, &BOB) <= bob_usdc_before);
-        assert!(Assets::balance(VNRG_ID, &BOB) <= bob_vnrg_before);
+        assert!(Assets::balance(USDC_ID, BOB) <= bob_usdc_before);
+        assert!(Assets::balance(VNRG_ID, BOB) <= bob_vnrg_before);
         // And the fee is still Alice's: the pool holds more USDC than it did
         // before Bob touched it.
-        assert!(Assets::balance(USDC_ID, &pool_account) >= 11_000);
+        assert!(Assets::balance(USDC_ID, pool_account) >= 11_000);
         // The add left the recorded reserves equal to the balances it priced
         // against; before D6 it recorded 21_980 USDC while holding 21_990.
         assert_eq!(recorded_after_add.reserve_a, held_after_add.0);
@@ -1827,8 +1827,8 @@ fn d6_add_liquidity_matches_optimal_amount_against_synced_reserves() {
         //   optimal_b = 10_990 × 36_397 / 11_000 = 36_363 (floor)
         //   shares    = min(10_990 × 20_000 / 11_000, 36_363 × 20_000 / 36_397)
         //             = min(19_981, 19_981) = 19_981
-        let bob_usdc_before = Assets::balance(USDC_ID, &BOB);
-        let bob_vnrg_before = Assets::balance(VNRG_ID, &BOB);
+        let bob_usdc_before = Assets::balance(USDC_ID, BOB);
+        let bob_vnrg_before = Assets::balance(VNRG_ID, BOB);
         assert_ok!(VitreusDex::add_liquidity(
             RuntimeOrigin::signed(BOB),
             usdc(),
@@ -1838,8 +1838,8 @@ fn d6_add_liquidity_matches_optimal_amount_against_synced_reserves() {
             0,
             0,
         ));
-        assert_eq!(bob_usdc_before - Assets::balance(USDC_ID, &BOB), 10_990);
-        assert_eq!(bob_vnrg_before - Assets::balance(VNRG_ID, &BOB), 36_363);
+        assert_eq!(bob_usdc_before - Assets::balance(USDC_ID, BOB), 10_990);
+        assert_eq!(bob_vnrg_before - Assets::balance(VNRG_ID, BOB), 36_363);
         assert_eq!(LiquidityPositions::<Test>::get(BOB, pair()).unwrap().shares, 19_981);
         assert_eq!(TotalLiquidity::<Test>::get(pair()), Some(39_981));
         let pool = Pools::<Test>::get(pair()).unwrap();

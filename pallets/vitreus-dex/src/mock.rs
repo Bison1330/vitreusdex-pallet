@@ -130,7 +130,7 @@ thread_local! {
     pub static SINK_NOTED: std::cell::RefCell<Vec<(u32, u128)>> = const { std::cell::RefCell::new(Vec::new()) };
     /// Creators primed by `MockBenchHelper::set_creator` (benchmarks only).
     static PRIMED_CREATORS: std::cell::RefCell<std::collections::BTreeMap<u32, u128>> =
-        std::cell::RefCell::new(std::collections::BTreeMap::new());
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
 }
 
 /// Benchmark helper for the mock: `WithId(seed)` assets, and creators primed

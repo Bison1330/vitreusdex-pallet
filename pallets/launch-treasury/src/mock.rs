@@ -292,10 +292,10 @@ impl Ledger {
 }
 
 thread_local! {
-    pub static LEDGER: RefCell<BTreeMap<Acc, Ledger>> = RefCell::new(BTreeMap::new());
+    pub static LEDGER: RefCell<BTreeMap<Acc, Ledger>> = const { RefCell::new(BTreeMap::new()) };
     pub static ERA: RefCell<u32> = const { RefCell::new(10) };
     /// Validators the vault may target: `account → cooperable`.
-    pub static VALIDATORS: RefCell<BTreeMap<Acc, bool>> = RefCell::new(BTreeMap::new());
+    pub static VALIDATORS: RefCell<BTreeMap<Acc, bool>> = const { RefCell::new(BTreeMap::new()) };
     /// Whether the vault's reputation clears the targets' `min_coop_reputation` (§2.2; a fresh account does, a slashed one may not).
     pub static REPUTATION_OK: RefCell<bool> = const { RefCell::new(true) };
     /// Every `cooperate` the mock accepted: the targets as submitted.

@@ -626,14 +626,13 @@ pub mod pallet {
 
         /// Filter targets, split `active` equally, `cooperate`. Returns the
         /// targets submitted.
+        #[allow(clippy::type_complexity)]
         pub fn do_retarget() -> Result<Vec<(T::AccountId, BalanceOf<T>)>, DispatchError> {
             let vault = Self::vault();
             let active = T::Staking::active(&vault);
             ensure!(active >= T::Staking::min_cooperator_bond(), Error::<T>::NothingToDo);
-            let survivors: Vec<T::AccountId> = Targets::<T>::get()
-                .into_iter()
-                .filter(|v| T::Staking::is_cooperable(v))
-                .collect();
+            let survivors: Vec<T::AccountId> =
+                Targets::<T>::get().into_iter().filter(T::Staking::is_cooperable).collect();
             ensure!(!survivors.is_empty(), Error::<T>::NoTargets);
             let n: u128 = survivors.len() as u128;
             let a: u128 = active.into();
@@ -940,7 +939,7 @@ pub mod pallet {
             type Venue<T> = pallet_launchpad::Pallet<T>;
             let curve = <Venue<T> as CurveVenue<_, _, _, _>>::last_trade_block(launch_id)?;
             let pool = Self::asset_kind_of(launch_id)
-                .and_then(|a| <T as pallet_launchpad::Config>::Dex::last_swap_block(a))
+                .and_then(<T as pallet_launchpad::Config>::Dex::last_swap_block)
                 .unwrap_or_default();
             Some(if pool > curve { pool } else { curve })
         }
