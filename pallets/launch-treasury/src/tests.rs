@@ -446,6 +446,8 @@ fn t_l5_finalize_credits_every_matured_launch_exactly() {
 fn t_l8_from_genesis_first_fee_withholds_ed_so_retirement_closes() {
     new_test_ext_from_genesis().execute_with(|| {
         assert_eq!(vtrs(vault()), 0, "no upgrade funded the vault");
+        // I-T1 holds before any fee: nothing funded the vault, so it counts no ED.
+        ok_state();
         let a = graduated_with_volume(ALICE, 10);
         assert_ok!(stake(a));
         run_to(now() + DORMANCY);

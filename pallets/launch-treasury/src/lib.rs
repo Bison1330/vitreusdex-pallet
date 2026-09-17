@@ -915,7 +915,13 @@ pub mod pallet {
                 shares = shares.saturating_add(t.shares);
             }
             frame_support::ensure!(shares == TotalShares::<T>::get(), "I-T2: shares");
-            let ed = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::minimum_balance(Self::native());
+            // The ED buffer is there once the upgrade or the first fee put it
+            // there (§9.6); before that the vault holds nothing unaccounted.
+            let ed = if VaultFunded::<T>::get() {
+                <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::minimum_balance(Self::native())
+            } else {
+                Zero::zero()
+            };
             let held = Self::assets_balance(Self::native(), &vault);
             let expected = ed.saturating_add(pending).saturating_add(pending_burn).saturating_add(T::Staking::total(&vault));
             frame_support::ensure!(held == expected, "I-T1: vault VTRS != ED + pending + pending_burn + ledger.total");
