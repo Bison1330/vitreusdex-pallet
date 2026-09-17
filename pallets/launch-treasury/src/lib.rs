@@ -37,6 +37,8 @@ pub use weights::WeightInfo;
 mod mock;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod fuzz;
 #[cfg(feature = "runtime-benchmarks")]
 pub mod benchmarking;
 #[cfg(feature = "runtime-benchmarks")]

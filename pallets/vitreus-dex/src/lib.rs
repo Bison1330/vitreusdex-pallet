@@ -61,7 +61,7 @@ use frame_support::{
         tokens::{
             Balance,
             Fortitude::Polite,
-            Preservation::{Expendable, Preserve},
+            Preservation::{self, Expendable, Preserve},
         },
         Contains, Get,
     },
@@ -1079,7 +1079,7 @@ pub mod pallet {
             recipient: T::AccountId,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-            Self::do_swap(&who, asset_in, asset_out, amount_in, amount_out_min, &recipient, true)?;
+            Self::do_swap(&who, asset_in, asset_out, amount_in, amount_out_min, &recipient, true, Preserve)?;
             Ok(())
         }
 
@@ -1458,6 +1458,7 @@ pub mod pallet {
                 commitment.committed_amount_out,
                 &intent_escrow,
                 true,
+                Expendable,
             )?;
 
             // Slippage capture: do_swap guarantees actual_out >= committed_amount_out.
@@ -2380,6 +2381,13 @@ pub mod pallet {
         /// not — the dormancy rule that reads it asks whether anyone still
         /// trades the token, and the pallet buying it back is not an
         /// answer (R2).
+        ///
+        /// `input`: how `amount_in` leaves `who`. A person keeps their ED
+        /// (`Preserve`): a swap of one's whole native balance used to kill
+        /// the account and then fail to deliver a non-sufficient asset to it
+        /// (`CannotCreate`, R9 — reachable, since fees are paid in energy).
+        /// A settled intent swaps from the intent escrow, which holds
+        /// exactly the intent's input and spends to zero (`Expendable`).
         pub(crate) fn do_swap(
             who: &T::AccountId,
             asset_in: T::AssetKind,
@@ -2388,6 +2396,7 @@ pub mod pallet {
             amount_out_min: T::Balance,
             recipient: &T::AccountId,
             is_trade: bool,
+            input: Preservation,
         ) -> Result<T::Balance, DispatchError> {
             ensure!(amount_in > Zero::zero(), Error::<T>::ZeroAmount);
 
@@ -2501,7 +2510,7 @@ pub mod pallet {
                 who,
                 &pool.pool_account,
                 amount_in,
-                Expendable,
+                input,
             )?;
             T::Assets::transfer(
                 asset_out.clone(),
@@ -2692,7 +2701,7 @@ impl<T: Config> PoolManager<T::AccountId, T::AssetKind, T::Balance, BlockNumberF
     ) -> Result<T::Balance, DispatchError> {
         // An in-runtime swap on a token's behalf is not a trade for the
         // dormancy clock (R2).
-        Self::do_swap(who, asset_in, asset_out, amount_in, amount_out_min, who, false)
+        Self::do_swap(who, asset_in, asset_out, amount_in, amount_out_min, who, false, Preserve)
     }
 
     fn native_reserves(asset: T::AssetKind) -> Option<(T::Balance, T::Balance)> {

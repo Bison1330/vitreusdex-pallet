@@ -1205,3 +1205,35 @@ fn r8_a_sale_never_asks_for_the_vaults_whole_lnrg() {
         ok_state();
     });
 }
+
+/// R9 — found by the fuzzer: a swap of an account's whole native balance.
+/// `do_swap` took the input with `Expendable`, the buyer's account died,
+/// and the tokens could not be delivered to it (`CannotCreate` for a
+/// non-sufficient asset): the whole swap reverted with an error the user
+/// cannot read. Fees are paid in energy on this chain, so spending the
+/// last VTRS is reachable. A person's swap keeps their ED, as the curve's
+/// buy and the treasury's own transfers do; only a settled intent, which
+/// swaps from the intent escrow, spends to zero.
+#[test]
+fn r9_a_swap_of_ones_whole_balance_keeps_the_ed_instead_of_failing() {
+    new_test_ext().execute_with(|| {
+        let a = graduated_with_volume(ALICE, 1);
+        // Dave has exactly 5 VTRS and no tokens.
+        let dave: Acc = sp_runtime::AccountId32::new([4u8; 32]);
+        assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave.clone(), 5 * UNIT));
+        // Everything above the ED: goes through, the account lives, the tokens arrive.
+        let r = VitreusDex::swap_exact_tokens_for_tokens(origin(&dave), NativeOrAssetId::Native, kind(a), 5 * UNIT - ED, 0, dave.clone());
+        assert!(r.is_ok(), "a swap of everything above the ED: {:?}", r);
+        assert_eq!(vtrs(&dave), ED, "the ED stays");
+        assert!(tok(a, &dave) > 0, "and the tokens arrived");
+        // The ED itself: refused up front with the same answer the curve gives,
+        // not `CannotCreate` after the account has died.
+        let r = VitreusDex::swap_exact_tokens_for_tokens(origin(&dave), NativeOrAssetId::Native, kind(a), ED, 0, dave.clone());
+        assert!(
+            matches!(r, Err(DispatchError::Token(sp_runtime::TokenError::Frozen | sp_runtime::TokenError::NotExpendable))),
+            "the ED cannot be spent, said up front: {:?}",
+            r
+        );
+        assert_eq!(vtrs(&dave), ED, "and nothing moved");
+    });
+}
