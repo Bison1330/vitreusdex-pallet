@@ -452,8 +452,9 @@ fn expected(op: &Op, e: &DispatchError) -> bool {
                 || is_mod(e, D::<Test>::InsufficientLiquidity)
                 || is_mod(e, D::<Test>::ZeroAmount)
                 || (*buy && funds && *amount + ED > free(&user(who)))
-                // A token-side swap whose fee-adjusted output rounds to nothing pays out zero: allowed.
-                || (!*buy && funds)
+            // A sell is clamped to what the seller holds and a zero output is
+            // `ZeroAmount` (R10): no funds error is expected on a sell. The
+            // arm that allowed one hid R11.
         }
         Op::AddLiquidity { who, vtrs, .. } => {
             (is_mod(e, D::<Test>::Overflow) && absurd(*vtrs))

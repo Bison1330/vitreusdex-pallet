@@ -1238,6 +1238,29 @@ fn r9_a_swap_of_ones_whole_balance_keeps_the_ed_instead_of_failing() {
     });
 }
 
+/// R11 — R9 over-reached: `Preserve` was applied to the input whatever the
+/// asset, and pallet-assets reads `Preserve` as "keep the minimum balance",
+/// so a holder selling their whole token position was refused with
+/// `NotExpendable`. The ED is a property of the native account; a token
+/// balance may go to zero. (The fuzz allowlist accepted any funds error on
+/// a sell and so missed it; the launchpad's fm03/fm13 caught it.)
+#[test]
+fn r11_selling_ones_whole_token_position_goes_through() {
+    new_test_ext().execute_with(|| {
+        let a = graduated_with_volume(ALICE, 0);
+        let dave: Acc = sp_runtime::AccountId32::new([6u8; 32]);
+        assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave.clone(), 20 * UNIT));
+        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(origin(&dave), NativeOrAssetId::Native, kind(a), 10 * UNIT, 0, dave.clone()));
+        let held = tok(a, &dave);
+        assert!(held > 0);
+        let before = vtrs(&dave);
+        let r = VitreusDex::swap_exact_tokens_for_tokens(origin(&dave), kind(a), NativeOrAssetId::Native, held, 0, dave.clone());
+        assert!(r.is_ok(), "the whole position sells: {:?}", r);
+        assert_eq!(tok(a, &dave), 0, "nothing left");
+        assert!(vtrs(&dave) > before, "and the VTRS arrived");
+    });
+}
+
 /// R10 — found by the fuzzer: a swap whose output rounds to zero. `do_swap`
 /// computed `amount_out = 0` for 1 wei into a nearly drained pool and went
 /// on to transfer it, and pallet-assets refused to open the buyer's token

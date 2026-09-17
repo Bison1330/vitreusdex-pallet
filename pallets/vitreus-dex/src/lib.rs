@@ -2509,6 +2509,12 @@ pub mod pallet {
             ensure!(!amount_out.is_zero(), Error::<T>::ZeroAmount);
             ensure!(amount_out_gross < reserve_out, Error::<T>::InsufficientLiquidity);
 
+            // `input` is about the native ED: a person keeps theirs (R9). A
+            // token has no such floor for its holder — `Preserve` on a
+            // pallet-assets balance refuses to take the last unit
+            // (`NotExpendable`), which would leave every holder unable to
+            // sell their whole position (R11). Only the native side keeps.
+            let input = if native_in { input } else { Expendable };
             T::Assets::transfer(
                 asset_in.clone(),
                 who,
