@@ -8,10 +8,8 @@
 //! Fill / settle / slash tests arrive with Part 2c.
 
 use crate::{
-    mock::*,
-    settlement::IntentStatus,
-    BidWindowBlocks, Error, Event, FillCommitments, IntentEscrowBalances,
-    Intents, NextIntentId, NextSolverId, SettlementWindowBlocks,
+    mock::*, settlement::IntentStatus, BidWindowBlocks, Error, Event, FillCommitments,
+    IntentEscrowBalances, Intents, NextIntentId, NextSolverId, SettlementWindowBlocks,
     SolverAccountToId, SolverBondAmount, Solvers,
 };
 use frame_support::{assert_noop, assert_ok};
@@ -40,9 +38,9 @@ fn set_bid_window_works_under_manage_origin() {
         assert_ok!(VitreusDex::set_bid_window(RuntimeOrigin::root(), 42));
         assert_eq!(BidWindowBlocks::<Test>::get(), Some(42));
 
-        System::assert_last_event(RuntimeEvent::VitreusDex(
-            Event::BidWindowUpdated { new_value: 42 },
-        ));
+        System::assert_last_event(RuntimeEvent::VitreusDex(Event::BidWindowUpdated {
+            new_value: 42,
+        }));
     });
 }
 
@@ -77,14 +75,8 @@ fn set_settlement_window_works() {
 #[test]
 fn set_solver_bond_amount_works() {
     new_test_ext().execute_with(|| {
-        assert_ok!(VitreusDex::set_solver_bond_amount(
-            RuntimeOrigin::root(),
-            2_000_000_000_000,
-        ));
-        assert_eq!(
-            SolverBondAmount::<Test>::get(),
-            Some(2_000_000_000_000),
-        );
+        assert_ok!(VitreusDex::set_solver_bond_amount(RuntimeOrigin::root(), 2_000_000_000_000,));
+        assert_eq!(SolverBondAmount::<Test>::get(), Some(2_000_000_000_000),);
     });
 }
 
@@ -210,13 +202,11 @@ fn deregister_solver_refunds_bond_and_deactivates() {
         assert!(!solver.active);
         assert_eq!(solver.bond, 0);
 
-        System::assert_has_event(RuntimeEvent::VitreusDex(
-            Event::SolverDeregistered {
-                solver_id: id,
-                account: ALICE,
-                bond_refunded: 1_000_000_000_000,
-            },
-        ));
+        System::assert_has_event(RuntimeEvent::VitreusDex(Event::SolverDeregistered {
+            solver_id: id,
+            account: ALICE,
+            bond_refunded: 1_000_000_000_000,
+        }));
     });
 }
 
@@ -275,10 +265,7 @@ fn submit_intent_escrows_token_in_and_stores_intent() {
         assert_eq!(intent.deadline, deadline);
         assert_eq!(intent.status, IntentStatus::Open);
 
-        assert_eq!(
-            IntentEscrowBalances::<Test>::get(0),
-            Some((usdc(), 500_000)),
-        );
+        assert_eq!(IntentEscrowBalances::<Test>::get(0), Some((usdc(), 500_000)),);
         assert_eq!(NextIntentId::<Test>::get(), 1);
     });
 }
@@ -389,13 +376,11 @@ fn cancel_intent_rejects_unknown_intent() {
 fn events_for_register_intent_cancel_have_correct_payloads() {
     new_test_ext().execute_with(|| {
         assert_ok!(VitreusDex::register_solver(RuntimeOrigin::signed(ALICE)));
-        System::assert_has_event(RuntimeEvent::VitreusDex(
-            Event::SolverRegistered {
-                solver_id: 0,
-                account: ALICE,
-                bond: 1_000_000_000_000,
-            },
-        ));
+        System::assert_has_event(RuntimeEvent::VitreusDex(Event::SolverRegistered {
+            solver_id: 0,
+            account: ALICE,
+            bond: 1_000_000_000_000,
+        }));
 
         let deadline = System::block_number() + 100;
         assert_ok!(VitreusDex::submit_intent(
@@ -406,22 +391,21 @@ fn events_for_register_intent_cancel_have_correct_payloads() {
             450_000,
             deadline,
         ));
-        System::assert_has_event(RuntimeEvent::VitreusDex(
-            Event::IntentSubmitted {
-                intent_id: 0,
-                user: ALICE,
-                token_in: usdc(),
-                token_out: vnrg(),
-                amount_in: 500_000,
-                min_amount_out: 450_000,
-                deadline,
-            },
-        ));
+        System::assert_has_event(RuntimeEvent::VitreusDex(Event::IntentSubmitted {
+            intent_id: 0,
+            user: ALICE,
+            token_in: usdc(),
+            token_out: vnrg(),
+            amount_in: 500_000,
+            min_amount_out: 450_000,
+            deadline,
+        }));
 
         assert_ok!(VitreusDex::cancel_intent(RuntimeOrigin::signed(ALICE), 0));
-        System::assert_has_event(RuntimeEvent::VitreusDex(
-            Event::IntentCancelled { intent_id: 0, user: ALICE },
-        ));
+        System::assert_has_event(RuntimeEvent::VitreusDex(Event::IntentCancelled {
+            intent_id: 0,
+            user: ALICE,
+        }));
     });
 }
 
@@ -442,12 +426,9 @@ use crate::settlement::{REPUTATION_FILL_REWARD, REPUTATION_SLASH_PENALTY};
 /// Create a native↔USDC pool and seed it with 500_000 of each from ALICE.
 /// Fee tier = 10 (1%), matching the pallet's whitelisted tiers.
 fn setup_pool_native_usdc() {
-    assert_ok!(VitreusDex::create_pool(
-        RuntimeOrigin::root(),
-        NativeOrAssetId::Native,
-        usdc(),
-        10,
-    ));
+    assert_ok!(
+        VitreusDex::create_pool(RuntimeOrigin::root(), NativeOrAssetId::Native, usdc(), 10,)
+    );
     assert_ok!(VitreusDex::add_liquidity(
         RuntimeOrigin::signed(ALICE),
         NativeOrAssetId::Native,
@@ -476,11 +457,7 @@ fn commit_fill_marks_intent_committed_and_increments_active() {
             System::block_number() + 100,
         ));
 
-        assert_ok!(VitreusDex::commit_fill(
-            RuntimeOrigin::signed(BOB),
-            0,
-            9_500,
-        ));
+        assert_ok!(VitreusDex::commit_fill(RuntimeOrigin::signed(BOB), 0, 9_500,));
 
         let intent = Intents::<Test>::get(0).expect("present");
         assert_eq!(intent.status, IntentStatus::Committed);
@@ -945,11 +922,19 @@ fn r6_a_solver_raising_its_own_bid_locks_its_bond_forever() {
         ));
         assert_ok!(VitreusDex::commit_fill(RuntimeOrigin::signed(BOB), 0, 9_500));
         assert_ok!(VitreusDex::commit_fill(RuntimeOrigin::signed(BOB), 0, 9_700));
-        assert_eq!(Solvers::<Test>::get(0).expect("present").active_commitments, 1, "one intent, one commitment");
+        assert_eq!(
+            Solvers::<Test>::get(0).expect("present").active_commitments,
+            1,
+            "one intent, one commitment"
+        );
         // The intent goes away without Bob settling: Alice's deadline passes
         // and Bob is slashed, which is the path that must leave him at zero.
         System::set_block_number(System::block_number() + 200);
         assert_ok!(VitreusDex::slash_solver(RuntimeOrigin::signed(CHARLIE), 0));
-        assert_eq!(Solvers::<Test>::get(0).expect("present").active_commitments, 0, "nothing committed after the slash");
+        assert_eq!(
+            Solvers::<Test>::get(0).expect("present").active_commitments,
+            0,
+            "nothing committed after the slash"
+        );
     });
 }

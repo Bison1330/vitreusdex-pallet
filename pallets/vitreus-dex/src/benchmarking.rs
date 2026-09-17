@@ -38,7 +38,10 @@ impl<AssetId: From<u32> + Ord, AccountId>
     fn asset_kind(seed: u32) -> frame_support::traits::fungible::NativeOrWithId<AssetId> {
         frame_support::traits::fungible::NativeOrWithId::WithId(seed.into())
     }
-    fn set_creator(_: &frame_support::traits::fungible::NativeOrWithId<AssetId>, _: &AccountId) -> bool {
+    fn set_creator(
+        _: &frame_support::traits::fungible::NativeOrWithId<AssetId>,
+        _: &AccountId,
+    ) -> bool {
         false
     }
 }
@@ -184,9 +187,19 @@ mod benchmarks {
         let half = shares / 2u32.into();
 
         #[extrinsic_call]
-        _(RawOrigin::Signed(caller.clone()), native::<T>(), asset, half, Zero::zero(), Zero::zero());
+        _(
+            RawOrigin::Signed(caller.clone()),
+            native::<T>(),
+            asset,
+            half,
+            Zero::zero(),
+            Zero::zero(),
+        );
 
-        assert_eq!(LiquidityPositions::<T>::get(&caller, &pair).expect("position").shares, shares - half);
+        assert_eq!(
+            LiquidityPositions::<T>::get(&caller, &pair).expect("position").shares,
+            shares - half
+        );
     }
 
     #[benchmark]
@@ -231,7 +244,10 @@ mod benchmarks {
         #[extrinsic_call]
         _(RawOrigin::Signed(caller.clone()), native::<T>(), asset, until);
 
-        assert_eq!(LiquidityPositions::<T>::get(&caller, &pair).expect("position").locked_until, Some(until));
+        assert_eq!(
+            LiquidityPositions::<T>::get(&caller, &pair).expect("position").locked_until,
+            Some(until)
+        );
     }
 
     /// Dearer branch: the caller has a prior, inactive registration.
@@ -269,7 +285,14 @@ mod benchmarks {
         let deadline = frame_system::Pallet::<T>::block_number() + 1_000u32.into();
 
         #[extrinsic_call]
-        _(RawOrigin::Signed(caller.clone()), asset, native::<T>(), trade::<T>(), One::one(), deadline);
+        _(
+            RawOrigin::Signed(caller.clone()),
+            asset,
+            native::<T>(),
+            trade::<T>(),
+            One::one(),
+            deadline,
+        );
 
         assert_eq!(Intents::<T>::get(id).expect("intent").status, IntentStatus::Open);
     }
@@ -297,7 +320,8 @@ mod benchmarks {
 
         let rival: T::AccountId = account("rival", 0, 0);
         register::<T>(&rival);
-        Dex::<T>::commit_fill(RawOrigin::Signed(rival).into(), id, One::one()).expect("rival commit");
+        Dex::<T>::commit_fill(RawOrigin::Signed(rival).into(), id, One::one())
+            .expect("rival commit");
 
         let caller: T::AccountId = whitelisted_caller();
         let solver_id = register::<T>(&caller);
@@ -324,7 +348,8 @@ mod benchmarks {
 
         let caller: T::AccountId = whitelisted_caller();
         let solver_id = register::<T>(&caller);
-        Dex::<T>::commit_fill(RawOrigin::Signed(caller.clone()).into(), id, One::one()).expect("commit");
+        Dex::<T>::commit_fill(RawOrigin::Signed(caller.clone()).into(), id, One::one())
+            .expect("commit");
         let before = T::Assets::balance(native::<T>(), &caller);
 
         #[extrinsic_call]
@@ -420,7 +445,10 @@ mod benchmarks {
         #[extrinsic_call]
         _(origin as T::RuntimeOrigin, 5, 5, 0);
 
-        assert_eq!(DefaultFeeRouting::<T>::get(), FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 0 });
+        assert_eq!(
+            DefaultFeeRouting::<T>::get(),
+            FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 0 }
+        );
         Ok(())
     }
 

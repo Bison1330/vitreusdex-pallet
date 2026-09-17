@@ -271,32 +271,42 @@ fn bv(s: &[u8]) -> frame_support::BoundedVec<u8, frame_support::traits::ConstU32
 fn run(op: &Op) -> Option<Result<(), DispatchError>> {
     let user = |i: u8| USERS[i as usize % USERS.len()].clone();
     Some(match op {
-        Op::CreateLaunch { creator, initial_buy } => {
-            Launchpad::create_launch(origin(&user(*creator)), bv(b"Fuzz"), bv(b"FZ"), None, *initial_buy, 0, None, None).map(|_| ()).map_err(|e| e.error)
-        }
+        Op::CreateLaunch { creator, initial_buy } => Launchpad::create_launch(
+            origin(&user(*creator)),
+            bv(b"Fuzz"),
+            bv(b"FZ"),
+            None,
+            *initial_buy,
+            0,
+            None,
+            None,
+        )
+        .map(|_| ())
+        .map_err(|e| e.error),
         Op::Buy { who, launch, q } => {
             let id = launch_at(*launch)?;
             Launchpad::buy(origin(&user(*who)), id, *q, 0).map(|_| ()).map_err(|e| e.error)
-        }
+        },
         Op::Sell { who, launch, frac_bps } => {
             let id = launch_at(*launch)?;
             let w = user(*who);
             let held = Assets::balance(asset_of(id), &w);
-            let tokens = held / 10_000 * (*frac_bps as u128) + (held % 10_000) * (*frac_bps as u128) / 10_000;
+            let tokens = held / 10_000 * (*frac_bps as u128)
+                + (held % 10_000) * (*frac_bps as u128) / 10_000;
             if tokens == 0 {
                 return None;
             }
             Launchpad::sell(origin(&w), id, tokens, 0)
-        }
+        },
         Op::ClaimCreatorFees { launch } => {
             let id = launch_at(*launch)?;
             let recipient = Launches::<Test>::get(id)?.creator_fee_recipient;
             Launchpad::claim_creator_fees(origin(&recipient), id)
-        }
+        },
         Op::Graduate { launch } => {
             let id = launch_at(*launch)?;
             Launchpad::graduate(origin(&KEEPER), id)
-        }
+        },
         Op::PoolSwap { who, launch, buy, amount } => {
             let id = launch_at(*launch)?;
             let w = user(*who);
@@ -311,7 +321,7 @@ fn run(op: &Op) -> Option<Result<(), DispatchError>> {
                 (kind(id), NativeOrAssetId::Native, amt)
             };
             VitreusDex::swap_exact_tokens_for_tokens(origin(&w), a_in, a_out, amt, 0, w.clone())
-        }
+        },
         Op::AddLiquidity { who, launch, vtrs } => {
             let id = launch_at(*launch)?;
             let w = user(*who);
@@ -319,51 +329,79 @@ fn run(op: &Op) -> Option<Result<(), DispatchError>> {
             if tokens == 0 {
                 return None;
             }
-            VitreusDex::add_liquidity(origin(&w), NativeOrAssetId::Native, kind(id), *vtrs, tokens, 0, 0)
-        }
+            VitreusDex::add_liquidity(
+                origin(&w),
+                NativeOrAssetId::Native,
+                kind(id),
+                *vtrs,
+                tokens,
+                0,
+                0,
+            )
+        },
         Op::RemoveLiquidity { who, launch, frac_bps } => {
             let id = launch_at(*launch)?;
             let w = user(*who);
             let pair = VitreusDex::canonical_pair(NativeOrAssetId::Native, kind(id));
             let shares = LiquidityPositions::<Test>::get(&w, &pair).map(|p| p.shares).unwrap_or(0);
-            let take = shares / 10_000 * (*frac_bps as u128) + (shares % 10_000) * (*frac_bps as u128) / 10_000;
+            let take = shares / 10_000 * (*frac_bps as u128)
+                + (shares % 10_000) * (*frac_bps as u128) / 10_000;
             if take == 0 {
                 return None;
             }
             VitreusDex::remove_liquidity(origin(&w), NativeOrAssetId::Native, kind(id), take, 0, 0)
-        }
+        },
         Op::Stake { launch } => LaunchTreasury::stake(origin(&KEEPER), launch_at(*launch)?),
         Op::Retarget => LaunchTreasury::retarget(origin(&KEEPER)),
         Op::Harvest => LaunchTreasury::harvest(origin(&KEEPER)),
-        Op::Compound { who, launch } => LaunchTreasury::compound(origin(&user(*who)), launch_at(*launch)?),
+        Op::Compound { who, launch } => {
+            LaunchTreasury::compound(origin(&user(*who)), launch_at(*launch)?)
+        },
         Op::Retire { launch } => LaunchTreasury::retire(origin(&KEEPER), launch_at(*launch)?),
-        Op::Finalize { launch } => LaunchTreasury::finalize_retirement(origin(&KEEPER), launch_at(*launch)?),
-        Op::SetTerms { impact, bounty, min_stake, interval, dormancy } => LaunchTreasury::set_terms(
+        Op::Finalize { launch } => {
+            LaunchTreasury::finalize_retirement(origin(&KEEPER), launch_at(*launch)?)
+        },
+        Op::SetTerms { impact, bounty, min_stake, interval, dormancy } => {
+            LaunchTreasury::set_terms(
+                RuntimeOrigin::root(),
+                TreasuryTerms {
+                    dormancy_blocks: *dormancy,
+                    min_stake: *min_stake,
+                    max_burn_impact_bps: *impact,
+                    min_burn_interval: *interval,
+                    keeper_bounty_bps: *bounty,
+                },
+            )
+        },
+        Op::SetTargets { mask } => LaunchTreasury::set_targets(
             RuntimeOrigin::root(),
-            TreasuryTerms { dormancy_blocks: *dormancy, min_stake: *min_stake, max_burn_impact_bps: *impact, min_burn_interval: *interval, keeper_bounty_bps: *bounty },
+            (0..3).filter(|i| mask & (1 << i) != 0).map(|i| VALS[i].clone()).collect(),
         ),
-        Op::SetTargets { mask } => LaunchTreasury::set_targets(RuntimeOrigin::root(), (0..3).filter(|i| mask & (1 << i) != 0).map(|i| VALS[i].clone()).collect()),
         Op::PayRewards { lnrg } => Assets::mint_into(LNRG_ID, &vault(), *lnrg).map(|_| ()),
         Op::Slash { bps } => {
             MockStaking::slash(&vault(), *bps as u128);
             Ok(())
-        }
+        },
         Op::SetCooperable { validator, ok } => {
             MockStaking::set_validator(VALS[*validator as usize % 3].clone(), *ok);
             Ok(())
-        }
+        },
         Op::SetReputation { ok } => {
             REPUTATION_OK.with(|r| *r.borrow_mut() = *ok);
             Ok(())
-        }
+        },
         Op::FundBroker { vtrs } => {
-            let _ = Balances::transfer_allow_death(origin(&ALICE), BROKER, (*vtrs).min(spendable(&ALICE)));
+            let _ = Balances::transfer_allow_death(
+                origin(&ALICE),
+                BROKER,
+                (*vtrs).min(spendable(&ALICE)),
+            );
             return None;
-        }
+        },
         Op::DrainBroker => {
             let _ = Balances::transfer_allow_death(origin(&BROKER), ALICE, spendable(&BROKER));
             return None;
-        }
+        },
         Op::Donate { to, what, launch, amount } => {
             let dest = match to {
                 Where::Vault => vault(),
@@ -373,27 +411,37 @@ fn run(op: &Op) -> Option<Result<(), DispatchError>> {
             };
             match what {
                 What::Vtrs => {
-                    let _ = Balances::transfer_allow_death(origin(&ALICE), dest, (*amount).min(spendable(&ALICE)));
-                }
+                    let _ = Balances::transfer_allow_death(
+                        origin(&ALICE),
+                        dest,
+                        (*amount).min(spendable(&ALICE)),
+                    );
+                },
                 What::Lnrg => {
                     let _ = Assets::mint_into(LNRG_ID, &dest, (*amount).min(10u128.pow(27)));
-                }
+                },
                 What::Token => {
                     let id = launch_at(*launch)?;
                     let held = Assets::balance(asset_of(id), &ALICE);
-                    let _ = <Assets as FungiblesMutate<Acc>>::transfer(asset_of(id), &ALICE, &dest, (*amount).min(held), Preservation::Expendable);
-                }
+                    let _ = <Assets as FungiblesMutate<Acc>>::transfer(
+                        asset_of(id),
+                        &ALICE,
+                        &dest,
+                        (*amount).min(held),
+                        Preservation::Expendable,
+                    );
+                },
             }
             return None;
-        }
+        },
         Op::AdvanceBlocks { n } => {
             System::set_block_number(System::block_number() + *n as u64);
             return None;
-        }
+        },
         Op::AdvanceEras { n } => {
             MockStaking::advance_eras(*n as u32);
             return None;
-        }
+        },
     })
 }
 
@@ -416,14 +464,30 @@ fn expected(op: &Op, e: &DispatchError) -> bool {
     // cases; they are allowed here, by name, until F14 is fixed. Delete this
     // when it is.
     let f14 = matches!(e, DispatchError::Token(TokenError::BelowMinimum))
-        && (!System::account_exists(&vault()) || !System::account_exists(&VitreusDex::fee_escrow_account()))
-        && matches!(op, Op::CreateLaunch { .. } | Op::Buy { .. } | Op::Sell { .. } | Op::PoolSwap { .. } | Op::Compound { .. });
+        && (!System::account_exists(&vault())
+            || !System::account_exists(&VitreusDex::fee_escrow_account()))
+        && matches!(
+            op,
+            Op::CreateLaunch { .. }
+                | Op::Buy { .. }
+                | Op::Sell { .. }
+                | Op::PoolSwap { .. }
+                | Op::Compound { .. }
+        );
     if f14 {
         return true;
     }
     // What pallet-balances says when the payer cannot pay: short of funds,
     // or exactly at ED with a Preserve transfer.
-    let funds = matches!(e, DispatchError::Token(TokenError::FundsUnavailable | TokenError::NotExpendable | TokenError::Frozen | TokenError::BelowMinimum) | DispatchError::Arithmetic(_));
+    let funds = matches!(
+        e,
+        DispatchError::Token(
+            TokenError::FundsUnavailable
+                | TokenError::NotExpendable
+                | TokenError::Frozen
+                | TokenError::BelowMinimum
+        ) | DispatchError::Arithmetic(_)
+    );
     // The DEX has no MAX_TRADE_IN: an amount beyond any real magnitude
     // (issuance is ~10^27) overflows its U256-then-u128 arithmetic and is
     // answered with `Overflow`. Informational; a bound would name it.
@@ -436,14 +500,18 @@ fn expected(op: &Op, e: &DispatchError) -> bool {
                 || is_mod(e, L::<Test>::ArithmeticOverflow) && *initial_buy > MAX_TRADE_IN
                 || is_mod(e, L::<Test>::Unquotable)
                 || is_mod(e, L::<Test>::CreationPaused)
-        }
+        },
         Op::Buy { who, q, .. } => {
             is_mod(e, L::<Test>::WrongPhase)
                 || is_mod(e, L::<Test>::Unquotable)
                 || (is_mod(e, L::<Test>::ArithmeticOverflow) && *q > MAX_TRADE_IN)
                 || (funds && *q + ED > free(&user(who)))
-        }
-        Op::Sell { .. } => is_mod(e, L::<Test>::WrongPhase) || is_mod(e, L::<Test>::Unquotable) || is_mod(e, L::<Test>::SellExceedsSold),
+        },
+        Op::Sell { .. } => {
+            is_mod(e, L::<Test>::WrongPhase)
+                || is_mod(e, L::<Test>::Unquotable)
+                || is_mod(e, L::<Test>::SellExceedsSold)
+        },
         Op::ClaimCreatorFees { .. } => is_mod(e, L::<Test>::ZeroAmount),
         Op::Graduate { .. } => is_mod(e, L::<Test>::WrongPhase),
         Op::PoolSwap { who, buy, amount, .. } => {
@@ -455,7 +523,7 @@ fn expected(op: &Op, e: &DispatchError) -> bool {
             // A sell is clamped to what the seller holds and a zero output is
             // `ZeroAmount` (R10): no funds error is expected on a sell. The
             // arm that allowed one hid R11.
-        }
+        },
         Op::AddLiquidity { who, vtrs, .. } => {
             (is_mod(e, D::<Test>::Overflow) && absurd(*vtrs))
                 || is_mod(e, D::<Test>::PoolNotFound)
@@ -464,7 +532,7 @@ fn expected(op: &Op, e: &DispatchError) -> bool {
                 || is_mod(e, D::<Test>::InsufficientLiquidity)
                 || is_mod(e, D::<Test>::SlippageExceeded)
                 || (funds && *vtrs + ED > free(&user(who)))
-        }
+        },
         Op::RemoveLiquidity { .. } => {
             is_mod(e, D::<Test>::PoolNotFound)
                 || is_mod(e, D::<Test>::PoolLocked)
@@ -473,24 +541,51 @@ fn expected(op: &Op, e: &DispatchError) -> bool {
                 // Known (REVIEW_2026-09-17 informational): the last LP cannot
                 // take the pool account under its ED. Allowed until fixed.
                 || matches!(e, DispatchError::Token(TokenError::FundsUnavailable))
-        }
+        },
         Op::Stake { .. } => {
-            is_mod(e, T::<Test>::NoTreasury) || is_mod(e, T::<Test>::NotActive) || is_mod(e, T::<Test>::BelowMinStake) || is_mod(e, T::<Test>::VaultInsolvent) || is_mod(e, T::<Test>::NothingToDo)
-        }
-        Op::Retarget => is_mod(e, T::<Test>::NothingToDo) || is_mod(e, T::<Test>::NoTargets) || matches!(e, DispatchError::Other(_)),
+            is_mod(e, T::<Test>::NoTreasury)
+                || is_mod(e, T::<Test>::NotActive)
+                || is_mod(e, T::<Test>::BelowMinStake)
+                || is_mod(e, T::<Test>::VaultInsolvent)
+                || is_mod(e, T::<Test>::NothingToDo)
+        },
+        Op::Retarget => {
+            is_mod(e, T::<Test>::NothingToDo)
+                || is_mod(e, T::<Test>::NoTargets)
+                || matches!(e, DispatchError::Other(_))
+        },
         Op::Harvest => is_mod(e, T::<Test>::NothingToDo),
-        Op::Compound { .. } => is_mod(e, T::<Test>::NoTreasury) || is_mod(e, T::<Test>::NothingToDo),
+        Op::Compound { .. } => {
+            is_mod(e, T::<Test>::NoTreasury) || is_mod(e, T::<Test>::NothingToDo)
+        },
         Op::Retire { .. } => {
-            is_mod(e, T::<Test>::NoTreasury) || is_mod(e, T::<Test>::NotActive) || is_mod(e, T::<Test>::NotDormant) || is_mod(e, T::<Test>::QueueFull) || matches!(e, DispatchError::Other(_))
-        }
-        Op::Finalize { .. } => is_mod(e, T::<Test>::NoTreasury) || is_mod(e, T::<Test>::NotRetiring) || is_mod(e, T::<Test>::NotMatured) || is_mod(e, T::<Test>::NothingToDo),
+            is_mod(e, T::<Test>::NoTreasury)
+                || is_mod(e, T::<Test>::NotActive)
+                || is_mod(e, T::<Test>::NotDormant)
+                || is_mod(e, T::<Test>::QueueFull)
+                || matches!(e, DispatchError::Other(_))
+        },
+        Op::Finalize { .. } => {
+            is_mod(e, T::<Test>::NoTreasury)
+                || is_mod(e, T::<Test>::NotRetiring)
+                || is_mod(e, T::<Test>::NotMatured)
+                || is_mod(e, T::<Test>::NothingToDo)
+        },
         Op::SetTerms { impact, bounty, min_stake, interval, dormancy } => {
-            is_mod(e, T::<Test>::TermsOutOfBounds) && !((10..=200).contains(impact) && *bounty <= 200 && *dormancy > 0 && *min_stake > 0 && *interval < u64::MAX)
-        }
+            is_mod(e, T::<Test>::TermsOutOfBounds)
+                && !((10..=200).contains(impact)
+                    && *bounty <= 200
+                    && *dormancy > 0
+                    && *min_stake > 0
+                    && *interval < u64::MAX)
+        },
         Op::SetTargets { .. } => false,
         // A reward for a vault that does not exist yet (from genesis, before
         // the first fee) has nowhere to land; on chain make_payout drops it.
-        Op::PayRewards { .. } => matches!(e, DispatchError::Arithmetic(_) | DispatchError::Token(TokenError::CannotCreate)),
+        Op::PayRewards { .. } => matches!(
+            e,
+            DispatchError::Arithmetic(_) | DispatchError::Token(TokenError::CannotCreate)
+        ),
         _ => false,
     }
 }
@@ -554,11 +649,18 @@ fn check_all(op: &Op, before: &Before) -> Result<(), String> {
                 // I1: escrow VTRS ≥ ED + real_quote + unclaimed creator fees.
                 let need = ED + c.real_quote + c.creator_fees_unclaimed;
                 if free(esc) < need {
-                    return Err(format!("I1 launch {id}: escrow holds {} < ED + real_quote + creator fees = {}", free(esc), need));
+                    return Err(format!(
+                        "I1 launch {id}: escrow holds {} < ED + real_quote + creator fees = {}",
+                        free(esc),
+                        need
+                    ));
                 }
                 // I2: escrow tokens ≥ remaining + reserved.
                 if Assets::balance(asset, esc) < c.tokens_remaining + RESERVED {
-                    return Err(format!("I2 launch {id}: escrow tokens {} < remaining + reserved", Assets::balance(asset, esc)));
+                    return Err(format!(
+                        "I2 launch {id}: escrow tokens {} < remaining + reserved",
+                        Assets::balance(asset, esc)
+                    ));
                 }
                 if c.phase == Phase::Complete && c.tokens_remaining != 0 {
                     return Err(format!("I6 launch {id}: Complete with tokens remaining"));
@@ -566,23 +668,37 @@ fn check_all(op: &Op, before: &Before) -> Result<(), String> {
                 if c.phase == Phase::Trading && c.tokens_remaining == 0 {
                     return Err(format!("I6 launch {id}: Trading with nothing left"));
                 }
-            }
+            },
             Phase::Graduated => {
                 if c.real_quote != 0 || c.tokens_remaining != 0 || c.lp_shares == 0 {
-                    return Err(format!("I6 launch {id}: graduated with real_quote {} remaining {} lp_shares {}", c.real_quote, c.tokens_remaining, c.lp_shares));
+                    return Err(format!(
+                        "I6 launch {id}: graduated with real_quote {} remaining {} lp_shares {}",
+                        c.real_quote, c.tokens_remaining, c.lp_shares
+                    ));
                 }
-                let pair = VitreusDex::canonical_pair(NativeOrAssetId::Native, NativeOrAssetId::WithId(asset));
-                let Some(pos) = LiquidityPositions::<Test>::get(esc, &pair) else { return Err(format!("launch {id}: graduated without an escrow position")) };
+                let pair = VitreusDex::canonical_pair(
+                    NativeOrAssetId::Native,
+                    NativeOrAssetId::WithId(asset),
+                );
+                let Some(pos) = LiquidityPositions::<Test>::get(esc, &pair) else {
+                    return Err(format!("launch {id}: graduated without an escrow position"));
+                };
                 if pos.locked_until != Some(u64::MAX) {
-                    return Err(format!("launch {id}: escrow position not locked forever: {:?}", pos.locked_until));
+                    return Err(format!(
+                        "launch {id}: escrow position not locked forever: {:?}",
+                        pos.locked_until
+                    ));
                 }
-            }
+            },
         }
         if c.tokens_remaining > SELLABLE {
             return Err(format!("I5 launch {id}: tokens_remaining above sellable"));
         }
         // I4: k never decreases while trading.
-        if let (Some(k0), Some(k1)) = (before.curve_k.get(&id), if c.phase == Phase::Trading { Launchpad::invariant_k(id) } else { None }) {
+        if let (Some(k0), Some(k1)) = (
+            before.curve_k.get(&id),
+            if c.phase == Phase::Trading { Launchpad::invariant_k(id) } else { None },
+        ) {
             if k1 < *k0 {
                 return Err(format!("I4 launch {id}: k fell from {k0} to {k1}"));
             }
@@ -590,7 +706,10 @@ fn check_all(op: &Op, before: &Before) -> Result<(), String> {
         // R2: the vault's own buy leaves the clock alone.
         if let (Op::Compound { .. }, Some(t0)) = (op, before.last_trade.get(&id)) {
             if c.last_trade_block != *t0 {
-                return Err(format!("R2 launch {id}: compound moved last_trade_block {t0} → {}", c.last_trade_block));
+                return Err(format!(
+                    "R2 launch {id}: compound moved last_trade_block {t0} → {}",
+                    c.last_trade_block
+                ));
             }
         }
         // Token conservation: every unit is somewhere we can name.
@@ -603,13 +722,22 @@ fn check_all(op: &Op, before: &Before) -> Result<(), String> {
 
     // DEX, per pool.
     for (pair, pool) in Pools::<Test>::iter() {
-        let (ba, bb) = (Assets::balance_of_kind(&pair.0, &pool.pool_account), Assets::balance_of_kind(&pair.1, &pool.pool_account));
+        let (ba, bb) = (
+            Assets::balance_of_kind(&pair.0, &pool.pool_account),
+            Assets::balance_of_kind(&pair.1, &pool.pool_account),
+        );
         if ba < pool.reserve_a || bb < pool.reserve_b {
-            return Err(format!("pool {pair:?}: balances ({ba}, {bb}) below stored reserves ({}, {})", pool.reserve_a, pool.reserve_b));
+            return Err(format!(
+                "pool {pair:?}: balances ({ba}, {bb}) below stored reserves ({}, {})",
+                pool.reserve_a, pool.reserve_b
+            ));
         }
         let total = TotalLiquidity::<Test>::get(&pair).unwrap_or(0);
         if total > 0 {
-            let positions: u128 = LiquidityPositions::<Test>::iter().filter(|(_, p, _)| *p == pair).map(|(_, _, pos)| pos.shares).sum();
+            let positions: u128 = LiquidityPositions::<Test>::iter()
+                .filter(|(_, p, _)| *p == pair)
+                .map(|(_, _, pos)| pos.shares)
+                .sum();
             if positions + MINIMUM_LIQUIDITY as u128 != total {
                 return Err(format!("pool {pair:?}: Σ positions {positions} + {MINIMUM_LIQUIDITY} ≠ TotalLiquidity {total}"));
             }
@@ -626,9 +754,15 @@ fn check_all(op: &Op, before: &Before) -> Result<(), String> {
 
     // VTRS conservation across the three pallets.
     let issuance = Balances::total_issuance();
-    let named: u128 = named_accounts().iter().map(|a| <Balances as frame_support::traits::Currency<Acc>>::total_balance(a)).sum();
+    let named: u128 = named_accounts()
+        .iter()
+        .map(|a| <Balances as frame_support::traits::Currency<Acc>>::total_balance(a))
+        .sum();
     if named != issuance {
-        return Err(format!("{} VTRS-wei are in an account nobody names (issuance {issuance}, named {named})", issuance.abs_diff(named)));
+        return Err(format!(
+            "{} VTRS-wei are in an account nobody names (issuance {issuance}, named {named})",
+            issuance.abs_diff(named)
+        ));
     }
     Ok(())
 }
@@ -647,37 +781,76 @@ impl BalanceOfKind for Assets {
 
 fn summary() -> String {
     let mut s = String::new();
-    s.push_str(&format!("block {} · era {} · vault: free {} ledger.active {} LNRG {} accounted {} shares {}\n", System::block_number(), MockStaking::current_era(), free(&vault()), MockStaking::active(&vault()), Assets::balance(LNRG_ID, &vault()), LnrgAccounted::<Test>::get(), TotalShares::<Test>::get()));
+    s.push_str(&format!(
+        "block {} · era {} · vault: free {} ledger.active {} LNRG {} accounted {} shares {}\n",
+        System::block_number(),
+        MockStaking::current_era(),
+        free(&vault()),
+        MockStaking::active(&vault()),
+        Assets::balance(LNRG_ID, &vault()),
+        LnrgAccounted::<Test>::get(),
+        TotalShares::<Test>::get()
+    ));
     for id in 0..NextLaunchId::<Test>::get() {
         if let Some(c) = Curves::<Test>::get(id) {
-            s.push_str(&format!("launch {id}: {:?} real_quote {} remaining {} creator_fees {} last_trade {}", c.phase, c.real_quote, c.tokens_remaining, c.creator_fees_unclaimed, c.last_trade_block));
+            s.push_str(&format!(
+                "launch {id}: {:?} real_quote {} remaining {} creator_fees {} last_trade {}",
+                c.phase,
+                c.real_quote,
+                c.tokens_remaining,
+                c.creator_fees_unclaimed,
+                c.last_trade_block
+            ));
             if let Some(t) = Treasuries::<Test>::get(id) {
-                s.push_str(&format!(" · treasury {:?} pending {} shares {} accrued {} pending_burn {}", t.status, t.pending, t.shares, t.lnrg_accrued, t.pending_burn));
+                s.push_str(&format!(
+                    " · treasury {:?} pending {} shares {} accrued {} pending_burn {}",
+                    t.status, t.pending, t.shares, t.lnrg_accrued, t.pending_burn
+                ));
             }
             if c.phase == Phase::Graduated {
                 let a = pool_account(id);
-                s.push_str(&format!(" · pool VTRS {} tokens {}", free(&a), Assets::balance(asset_of(id), &a)));
+                s.push_str(&format!(
+                    " · pool VTRS {} tokens {}",
+                    free(&a),
+                    Assets::balance(asset_of(id), &a)
+                ));
             }
             s.push('\n');
         }
     }
-    s.push_str(&format!("broker {} · users {:?}\n", free(&BROKER), USERS.iter().map(free).collect::<Vec<_>>()));
+    s.push_str(&format!(
+        "broker {} · users {:?}\n",
+        free(&BROKER),
+        USERS.iter().map(free).collect::<Vec<_>>()
+    ));
     s
 }
 
 /// Run a sequence; on the first violation, describe it with the op index.
 fn run_sequence(ops: &[Op]) -> Result<(), String> {
-    let _ = <Assets as FungiblesMutate<Acc>>::burn_from(LNRG_ID, &vault(), 0, Preservation::Expendable, Precision::BestEffort, Fortitude::Polite);
+    let _ = <Assets as FungiblesMutate<Acc>>::burn_from(
+        LNRG_ID,
+        &vault(),
+        0,
+        Preservation::Expendable,
+        Precision::BestEffort,
+        Fortitude::Polite,
+    );
     for (i, op) in ops.iter().enumerate() {
         let before = snapshot();
         if let Some(res) = run(op) {
             if let Err(e) = res {
                 if !expected(op, &e) {
-                    return Err(format!("step {}: {op:?} → unexpected {e:?}\n{}", i + 1, summary()));
+                    return Err(format!(
+                        "step {}: {op:?} → unexpected {e:?}\n{}",
+                        i + 1,
+                        summary()
+                    ));
                 }
             }
         }
-        check_all(op, &before).map_err(|why| format!("step {}: after {op:?}: {why}\n{}", i + 1, summary()))?;
+        check_all(op, &before)
+            .map_err(|why| format!("step {}: after {op:?}: {why}\n{}", i + 1, summary()))?;
     }
     Ok(())
 }

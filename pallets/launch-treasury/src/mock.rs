@@ -29,8 +29,8 @@ use frame_support::{
     traits::{
         fungibles::Mutate as _,
         tokens::{Fortitude, Precision, Preservation},
-        AsEnsureOriginWithArg, ConstU128, ConstU16, ConstU32, ConstU64, Contains, LockIdentifier, LockableCurrency,
-        WithdrawReasons,
+        AsEnsureOriginWithArg, ConstU128, ConstU16, ConstU32, ConstU64, Contains, LockIdentifier,
+        LockableCurrency, WithdrawReasons,
     },
     PalletId,
 };
@@ -232,7 +232,14 @@ impl sp_runtime::traits::Convert<NativeOrAssetId, Option<u128>> for AssetIdOfKin
 
 pub struct PassHook;
 impl OnCurveBuy<Acc, u128, u64> for PassHook {
-    fn on_buy(_: LaunchId, _: u64, _: u64, _: &Acc, _: bool, quote_in: u128) -> Result<(u128, u128), DispatchError> {
+    fn on_buy(
+        _: LaunchId,
+        _: u64,
+        _: u64,
+        _: &Acc,
+        _: bool,
+        quote_in: u128,
+    ) -> Result<(u128, u128), DispatchError> {
         Ok((quote_in, 0))
     }
 }
@@ -316,7 +323,12 @@ impl MockStaking {
         if total == 0 {
             <Balances as LockableCurrency<Acc>>::remove_lock(STAKING_LOCK, stash);
         } else {
-            <Balances as LockableCurrency<Acc>>::set_lock(STAKING_LOCK, stash, total, WithdrawReasons::all());
+            <Balances as LockableCurrency<Acc>>::set_lock(
+                STAKING_LOCK,
+                stash,
+                total,
+                WithdrawReasons::all(),
+            );
         }
     }
     pub fn ledger(stash: &Acc) -> Option<Ledger> {
@@ -334,7 +346,10 @@ impl MockStaking {
                     c.1 = cut(c.1);
                 }
                 // The slashed VTRS leaves the stash (to the Treasury on chain), lock or no lock.
-                let _ = <Balances as frame_support::traits::Currency<Acc>>::slash(stash, before - l.total());
+                let _ = <Balances as frame_support::traits::Currency<Acc>>::slash(
+                    stash,
+                    before - l.total(),
+                );
                 let total = l.active;
                 let old: u128 = l.targets.iter().map(|(_, s)| s).sum();
                 if old > 0 && total < old {
@@ -517,11 +532,22 @@ impl MockBroker {
 impl QuotePrice for MockBroker {
     type Balance = u128;
     type AssetKind = NativeOrAssetId;
-    fn quote_price_tokens_for_exact_tokens(_: NativeOrAssetId, _: NativeOrAssetId, _: u128, _: bool) -> Option<u128> {
+    fn quote_price_tokens_for_exact_tokens(
+        _: NativeOrAssetId,
+        _: NativeOrAssetId,
+        _: u128,
+        _: bool,
+    ) -> Option<u128> {
         None
     }
-    fn quote_price_exact_tokens_for_tokens(a1: NativeOrAssetId, a2: NativeOrAssetId, amount: u128, _: bool) -> Option<u128> {
-        (a1 == NativeOrAssetId::WithId(LNRG_ID) && a2 == NativeOrAssetId::Native).then(|| Self::out_for(amount))
+    fn quote_price_exact_tokens_for_tokens(
+        a1: NativeOrAssetId,
+        a2: NativeOrAssetId,
+        amount: u128,
+        _: bool,
+    ) -> Option<u128> {
+        (a1 == NativeOrAssetId::WithId(LNRG_ID) && a2 == NativeOrAssetId::Native)
+            .then(|| Self::out_for(amount))
     }
 }
 impl Swap<Acc> for MockBroker {
@@ -546,7 +572,13 @@ impl Swap<Acc> for MockBroker {
         // and for a pallet-assets asset that is balance − min_balance. Selling
         // an account's whole LNRG is `NotExpendable` (R8, seen live on 222).
         if keep_alive {
-            let reducible = <Assets as frame_support::traits::fungibles::Inspect<Acc>>::reducible_balance(LNRG_ID, &sender, Preservation::Preserve, Fortitude::Polite);
+            let reducible =
+                <Assets as frame_support::traits::fungibles::Inspect<Acc>>::reducible_balance(
+                    LNRG_ID,
+                    &sender,
+                    Preservation::Preserve,
+                    Fortitude::Polite,
+                );
             if reducible < amount_in {
                 return Err(sp_runtime::TokenError::NotExpendable.into());
             }
@@ -564,11 +596,30 @@ impl Swap<Acc> for MockBroker {
             return Err(err("InsufficientLiquidity"));
         }
         // LNRG sold is burned (the real converter drops the credit); VTRS comes from the broker.
-        Assets::burn_from(LNRG_ID, &sender, amount_in, if keep_alive { Preservation::Preserve } else { Preservation::Expendable }, Precision::Exact, Fortitude::Polite)?;
-        <Balances as frame_support::traits::fungible::Mutate<Acc>>::transfer(&BROKER, &send_to, out, Preservation::Preserve)?;
+        Assets::burn_from(
+            LNRG_ID,
+            &sender,
+            amount_in,
+            if keep_alive { Preservation::Preserve } else { Preservation::Expendable },
+            Precision::Exact,
+            Fortitude::Polite,
+        )?;
+        <Balances as frame_support::traits::fungible::Mutate<Acc>>::transfer(
+            &BROKER,
+            &send_to,
+            out,
+            Preservation::Preserve,
+        )?;
         Ok(out)
     }
-    fn swap_tokens_for_exact_tokens(_: Acc, _: Vec<NativeOrAssetId>, _: u128, _: Option<u128>, _: Acc, _: bool) -> Result<u128, DispatchError> {
+    fn swap_tokens_for_exact_tokens(
+        _: Acc,
+        _: Vec<NativeOrAssetId>,
+        _: u128,
+        _: Option<u128>,
+        _: Acc,
+        _: bool,
+    ) -> Result<u128, DispatchError> {
         Err(err("unsupported"))
     }
 }
@@ -659,10 +710,15 @@ fn build_ext(vault_funded: bool) -> sp_io::TestExternalities {
     if vault_funded {
         balances.push((vault(), ED));
     }
-    pallet_balances::GenesisConfig::<Test> { balances }.assimilate_storage(&mut t).unwrap();
+    pallet_balances::GenesisConfig::<Test> { balances }
+        .assimilate_storage(&mut t)
+        .unwrap();
     pallet_assets::GenesisConfig::<Test> {
         assets: vec![(VNRG_ID, ALICE, false, 1), (LNRG_ID, ALICE, false, 1)],
-        metadata: vec![(VNRG_ID, b"VNRG".to_vec(), b"VNRG".to_vec(), 18), (LNRG_ID, b"LNRG".to_vec(), b"LNRG".to_vec(), 18)],
+        metadata: vec![
+            (VNRG_ID, b"VNRG".to_vec(), b"VNRG".to_vec(), 18),
+            (LNRG_ID, b"LNRG".to_vec(), b"LNRG".to_vec(), 18),
+        ],
         accounts: vec![],
         ..Default::default()
     }
@@ -687,8 +743,16 @@ fn build_ext(vault_funded: bool) -> sp_io::TestExternalities {
             VaultFunded::<Test>::put(true);
         }
         // Spec §2.6 pool split: 5 protocol / 5 creator / 10 treasury / 10 pool.
-        frame_support::assert_ok!(VitreusDex::set_default_fee_routing(RuntimeOrigin::root(), 5, 5, 10));
-        frame_support::assert_ok!(LaunchTreasury::set_targets(RuntimeOrigin::root(), vec![VAL_A, VAL_B]));
+        frame_support::assert_ok!(VitreusDex::set_default_fee_routing(
+            RuntimeOrigin::root(),
+            5,
+            5,
+            10
+        ));
+        frame_support::assert_ok!(LaunchTreasury::set_targets(
+            RuntimeOrigin::root(),
+            vec![VAL_A, VAL_B]
+        ));
     });
     ext
 }

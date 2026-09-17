@@ -18,10 +18,10 @@
 
 pub use pallet::*;
 
-pub mod curve;
-pub mod weights;
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
+pub mod curve;
+pub mod weights;
 
 pub use weights::WeightInfo;
 
@@ -34,9 +34,12 @@ use frame_support::{
     dispatch::DispatchResult,
     traits::{
         fungible::{self, Inspect as FungibleInspect, Mutate as FungibleMutate},
-        fungibles::{metadata::Mutate as MetadataMutate, Create, Inspect as FungiblesInspect, Mutate as FungiblesMutate},
+        fungibles::{
+            metadata::Mutate as MetadataMutate, Create, Inspect as FungiblesInspect,
+            Mutate as FungiblesMutate,
+        },
         tokens::{
-                Fortitude::Polite,
+            Fortitude::Polite,
             Preservation::{Expendable, Preserve},
         },
         EnsureOrigin, Get,
@@ -44,12 +47,17 @@ use frame_support::{
     BoundedVec, CloneNoBound, EqNoBound, PalletId, PartialEqNoBound, RuntimeDebugNoBound,
 };
 use frame_system::pallet_prelude::BlockNumberFor;
-use pallet_vitreus_dex::{PoolManager, ReservedPoolSeeder, TreasurySink, MINIMUM_LIQUIDITY, MIN_LAUNCH_FEE_TIER};
+use pallet_vitreus_dex::{
+    PoolManager, ReservedPoolSeeder, TreasurySink, MINIMUM_LIQUIDITY, MIN_LAUNCH_FEE_TIER,
+};
 use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_core::U256;
 use sp_runtime::{
-    traits::{AccountIdConversion, AtLeast32BitUnsigned, Bounded, CheckedSub, Convert, Hash, One, Saturating, UniqueSaturatedFrom, Zero},
+    traits::{
+        AccountIdConversion, AtLeast32BitUnsigned, Bounded, CheckedSub, Convert, Hash, One,
+        Saturating, UniqueSaturatedFrom, Zero,
+    },
     DispatchError, RuntimeDebug,
 };
 use sp_std::vec::Vec;
@@ -128,7 +136,16 @@ pub struct Launch<T: Config> {
 /// Every field is a bounded byte string the chain stores and returns
 /// verbatim — nothing here is validated or verified on chain (see §2.9): the
 /// image is expected to be a URI the frontend resolves, not image bytes.
-#[derive(CloneNoBound, Encode, Decode, EqNoBound, PartialEqNoBound, RuntimeDebugNoBound, TypeInfo, MaxEncodedLen)]
+#[derive(
+    CloneNoBound,
+    Encode,
+    Decode,
+    EqNoBound,
+    PartialEqNoBound,
+    RuntimeDebugNoBound,
+    TypeInfo,
+    MaxEncodedLen,
+)]
 #[scale_info(skip_type_params(UriLimit, DescriptionLimit))]
 pub struct LaunchMetadata<UriLimit: Get<u32>, DescriptionLimit: Get<u32>> {
     /// Image URI (https://…, ipfs://…, data:…). Resolved and sandboxed by the frontend.
@@ -154,7 +171,8 @@ impl<UriLimit: Get<u32>, DescriptionLimit: Get<u32>> LaunchMetadata<UriLimit, De
 }
 
 /// [`LaunchMetadata`] with this pallet's bounds.
-pub type LaunchMetadataOf<T> = LaunchMetadata<<T as Config>::UriLimit, <T as Config>::DescriptionLimit>;
+pub type LaunchMetadataOf<T> =
+    LaunchMetadata<<T as Config>::UriLimit, <T as Config>::DescriptionLimit>;
 
 /// Hot per-launch curve state (§1.3).
 #[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
@@ -221,7 +239,14 @@ pub trait OnCurveBuy<AccountId, Balance, BlockNumber> {
 }
 
 impl<A, B: Zero, N> OnCurveBuy<A, B, N> for () {
-    fn on_buy(_: LaunchId, _: N, _: N, _: &A, _: bool, quote_in: B) -> Result<(B, B), DispatchError> {
+    fn on_buy(
+        _: LaunchId,
+        _: N,
+        _: N,
+        _: &A,
+        _: bool,
+        quote_in: B,
+    ) -> Result<(B, B), DispatchError> {
         Ok((quote_in, B::zero()))
     }
 }
@@ -276,7 +301,12 @@ pub mod pallet {
         /// VitreusDEX. Trait-typed so the launchpad only calls the
         /// `PoolManager` / `ReservedPoolSeeder` surface.
         type Dex: PoolManager<Self::AccountId, AssetKindOf<Self>, BalanceOf<Self>, BlockNumberFor<Self>>
-            + ReservedPoolSeeder<Self::AccountId, AssetKindOf<Self>, BalanceOf<Self>, BlockNumberFor<Self>>;
+            + ReservedPoolSeeder<
+                Self::AccountId,
+                AssetKindOf<Self>,
+                BalanceOf<Self>,
+                BlockNumberFor<Self>,
+            >;
 
         /// Receives protocol fees and rescue leftovers.
         type Treasury: Get<Self::AccountId>;
@@ -344,7 +374,8 @@ pub mod pallet {
 
     /// Live governance parameters. Read at `create_launch` and snapshotted.
     #[pallet::storage]
-    pub type Params<T: Config> = StorageValue<_, LaunchParams<BalanceOf<T>>, ValueQuery, DefaultParams<T>>;
+    pub type Params<T: Config> =
+        StorageValue<_, LaunchParams<BalanceOf<T>>, ValueQuery, DefaultParams<T>>;
 
     /// Blocks `create_launch` only. Never affects buy/sell/graduate.
     #[pallet::storage]
@@ -373,21 +404,67 @@ pub mod pallet {
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
-        LaunchCreated { id: LaunchId, asset_id: AssetIdOf<T>, creator: T::AccountId, params_hash: T::Hash },
-        Bought { launch_id: LaunchId, who: T::AccountId, quote_used: BalanceOf<T>, fee: BalanceOf<T>, tokens_out: BalanceOf<T> },
-        Sold { launch_id: LaunchId, who: T::AccountId, tokens_in: BalanceOf<T>, fee: BalanceOf<T>, quote_out: BalanceOf<T> },
-        CurveCompleted { launch_id: LaunchId, raised: BalanceOf<T> },
+        LaunchCreated {
+            id: LaunchId,
+            asset_id: AssetIdOf<T>,
+            creator: T::AccountId,
+            params_hash: T::Hash,
+        },
+        Bought {
+            launch_id: LaunchId,
+            who: T::AccountId,
+            quote_used: BalanceOf<T>,
+            fee: BalanceOf<T>,
+            tokens_out: BalanceOf<T>,
+        },
+        Sold {
+            launch_id: LaunchId,
+            who: T::AccountId,
+            tokens_in: BalanceOf<T>,
+            fee: BalanceOf<T>,
+            quote_out: BalanceOf<T>,
+        },
+        CurveCompleted {
+            launch_id: LaunchId,
+            raised: BalanceOf<T>,
+        },
         /// Seeding failed inside the crossing buy; the buy stands, the launch
         /// stays `Complete`, and `graduate` may be retried by anyone.
-        GraduationDeferred { launch_id: LaunchId, error: DispatchError },
-        Graduated { launch_id: LaunchId, quote_seeded: BalanceOf<T>, tokens_seeded: BalanceOf<T>, shares: BalanceOf<T> },
-        CreatorFeesClaimed { launch_id: LaunchId, recipient: T::AccountId, amount: BalanceOf<T> },
-        CreatorFeeRecipientChanged { launch_id: LaunchId, old: T::AccountId, new: T::AccountId },
+        GraduationDeferred {
+            launch_id: LaunchId,
+            error: DispatchError,
+        },
+        Graduated {
+            launch_id: LaunchId,
+            quote_seeded: BalanceOf<T>,
+            tokens_seeded: BalanceOf<T>,
+            shares: BalanceOf<T>,
+        },
+        CreatorFeesClaimed {
+            launch_id: LaunchId,
+            recipient: T::AccountId,
+            amount: BalanceOf<T>,
+        },
+        CreatorFeeRecipientChanged {
+            launch_id: LaunchId,
+            old: T::AccountId,
+            new: T::AccountId,
+        },
         /// Metadata was written for a launch (at creation or by `set_launch_metadata`).
-        LaunchMetadataSet { launch_id: LaunchId },
-        ParamsUpdated { params: LaunchParams<BalanceOf<T>> },
-        CreationPausedSet { paused: bool },
-        ForceSeeded { launch_id: LaunchId, deviation_bps: u16, shares: BalanceOf<T> },
+        LaunchMetadataSet {
+            launch_id: LaunchId,
+        },
+        ParamsUpdated {
+            params: LaunchParams<BalanceOf<T>>,
+        },
+        CreationPausedSet {
+            paused: bool,
+        },
+        ForceSeeded {
+            launch_id: LaunchId,
+            deviation_bps: u16,
+            shares: BalanceOf<T>,
+        },
     }
 
     #[pallet::error]
@@ -459,7 +536,10 @@ pub mod pallet {
             }
 
             let asset_kind = T::IntoAssetKind::convert(asset_id);
-            ensure!(!T::Dex::pool_exists(T::NativeAssetKind::get(), asset_kind), Error::<T>::PoolAlreadySeeded);
+            ensure!(
+                !T::Dex::pool_exists(T::NativeAssetKind::get(), asset_kind),
+                Error::<T>::PoolAlreadySeeded
+            );
             Self::ensure_seedable(curve.graduation_target.into(), Self::reserved().into())?;
 
             let escrow = Self::escrow_account(id);
@@ -515,7 +595,12 @@ pub mod pallet {
             );
             AssetToLaunch::<T>::insert(asset_id, id);
             NextLaunchId::<T>::put(id.checked_add(1).ok_or(Error::<T>::ArithmeticOverflow)?);
-            Self::deposit_event(Event::LaunchCreated { id, asset_id, creator: creator.clone(), params_hash });
+            Self::deposit_event(Event::LaunchCreated {
+                id,
+                asset_id,
+                creator: creator.clone(),
+                params_hash,
+            });
 
             // 7. presentation metadata, stored apart from the launch record (§2.9).
             let (d, u) = metadata.as_ref().map(|m| m.dims()).unwrap_or((0, 0));
@@ -527,10 +612,16 @@ pub mod pallet {
             // 8. optional atomic first buy. Charged as a crossing buy up front;
             // refunded to a plain buy when the curve was not exhausted.
             if !initial_buy.is_zero() {
-                let (crossed, _) = Self::do_buy(&creator, id, initial_buy, min_tokens_out, true, true)?;
+                let (crossed, _) =
+                    Self::do_buy(&creator, id, initial_buy, min_tokens_out, true, true)?;
                 if !crossed {
-                    let w = <T as Config>::WeightInfo::create_launch(name.len() as u32, symbol.len() as u32, d, u)
-                        .saturating_add(<T as Config>::WeightInfo::buy());
+                    let w = <T as Config>::WeightInfo::create_launch(
+                        name.len() as u32,
+                        symbol.len() as u32,
+                        d,
+                        u,
+                    )
+                    .saturating_add(<T as Config>::WeightInfo::buy());
                     return Ok(Some(w).into());
                 }
             }
@@ -550,7 +641,14 @@ pub mod pallet {
         ) -> DispatchResultWithPostInfo {
             let who = ensure_signed(origin)?;
             let launch = Launches::<T>::get(launch_id).ok_or(Error::<T>::LaunchNotFound)?;
-            let (crossed, _) = Self::do_buy(&who, launch_id, quote_in, min_tokens_out, who == launch.creator, true)?;
+            let (crossed, _) = Self::do_buy(
+                &who,
+                launch_id,
+                quote_in,
+                min_tokens_out,
+                who == launch.creator,
+                true,
+            )?;
             Ok(if crossed { None } else { Some(<T as Config>::WeightInfo::buy()) }.into())
         }
 
@@ -583,13 +681,16 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
             let launch = Launches::<T>::get(launch_id).ok_or(Error::<T>::LaunchNotFound)?;
             ensure!(who == launch.creator_fee_recipient, Error::<T>::NotFeeRecipient);
-            let amount = Curves::<T>::try_mutate(launch_id, |maybe| -> Result<BalanceOf<T>, DispatchError> {
-                let c = maybe.as_mut().ok_or(Error::<T>::LaunchNotFound)?;
-                let amount = c.creator_fees_unclaimed;
-                ensure!(!amount.is_zero(), Error::<T>::ZeroAmount);
-                c.creator_fees_unclaimed = Zero::zero();
-                Ok(amount)
-            })?;
+            let amount = Curves::<T>::try_mutate(
+                launch_id,
+                |maybe| -> Result<BalanceOf<T>, DispatchError> {
+                    let c = maybe.as_mut().ok_or(Error::<T>::LaunchNotFound)?;
+                    let amount = c.creator_fees_unclaimed;
+                    ensure!(!amount.is_zero(), Error::<T>::ZeroAmount);
+                    c.creator_fees_unclaimed = Zero::zero();
+                    Ok(amount)
+                },
+            )?;
             T::Currency::transfer(&launch.escrow, &who, amount, Preserve)?;
             Self::deposit_event(Event::CreatorFeesClaimed { launch_id, recipient: who, amount });
             Ok(())
@@ -608,7 +709,11 @@ pub mod pallet {
                 let l = maybe.as_mut().ok_or(Error::<T>::LaunchNotFound)?;
                 ensure!(who == l.creator_fee_recipient, Error::<T>::NotFeeRecipient);
                 let old = core::mem::replace(&mut l.creator_fee_recipient, new.clone());
-                Self::deposit_event(Event::CreatorFeeRecipientChanged { launch_id, old, new: new.clone() });
+                Self::deposit_event(Event::CreatorFeeRecipientChanged {
+                    launch_id,
+                    old,
+                    new: new.clone(),
+                });
                 Ok(())
             })
         }
@@ -676,7 +781,10 @@ pub mod pallet {
             ensure!(curve.phase == Phase::Complete, Error::<T>::WrongPhase);
             let completed_at = curve.completed_at.ok_or(Error::<T>::WrongPhase)?;
             let now = frame_system::Pallet::<T>::block_number();
-            ensure!(now >= completed_at.saturating_add(T::RescueDelay::get()), Error::<T>::RescueNotDue);
+            ensure!(
+                now >= completed_at.saturating_add(T::RescueDelay::get()),
+                Error::<T>::RescueNotDue
+            );
 
             let asset = T::IntoAssetKind::convert(launch.asset_id);
             let native = T::NativeAssetKind::get();
@@ -686,7 +794,8 @@ pub mod pallet {
             let quote = curve.real_quote;
             let keep = |amount: BalanceOf<T>| -> BalanceOf<T> {
                 let a: u128 = amount.into();
-                let kept = a.saturating_mul((BPS - max_price_deviation_bps) as u128) / (BPS as u128);
+                let kept =
+                    a.saturating_mul((BPS - max_price_deviation_bps) as u128) / (BPS as u128);
                 kept.into()
             };
 
@@ -714,7 +823,8 @@ pub mod pallet {
 
             // Sweep what the pool did not take (only escrow → treasury).
             let quote_spent = quote_before.saturating_sub(T::Currency::balance(&escrow));
-            let tokens_spent = tokens_before.saturating_sub(T::LaunchAssets::balance(launch.asset_id, &escrow));
+            let tokens_spent =
+                tokens_before.saturating_sub(T::LaunchAssets::balance(launch.asset_id, &escrow));
             let quote_left = quote.saturating_sub(quote_spent);
             let tokens_left = reserved.saturating_sub(tokens_spent);
             let treasury = T::Treasury::get();
@@ -722,7 +832,13 @@ pub mod pallet {
                 T::Currency::transfer(&escrow, &treasury, quote_left, Preserve)?;
             }
             if !tokens_left.is_zero() {
-                T::LaunchAssets::transfer(launch.asset_id, &escrow, &treasury, tokens_left, Expendable)?;
+                T::LaunchAssets::transfer(
+                    launch.asset_id,
+                    &escrow,
+                    &treasury,
+                    tokens_left,
+                    Expendable,
+                )?;
             }
 
             Curves::<T>::mutate(launch_id, |maybe| {
@@ -733,8 +849,17 @@ pub mod pallet {
                     c.graduated_at = Some(now);
                 }
             });
-            Self::deposit_event(Event::ForceSeeded { launch_id, deviation_bps: max_price_deviation_bps, shares });
-            Self::deposit_event(Event::Graduated { launch_id, quote_seeded: quote_spent, tokens_seeded: tokens_spent, shares });
+            Self::deposit_event(Event::ForceSeeded {
+                launch_id,
+                deviation_bps: max_price_deviation_bps,
+                shares,
+            });
+            Self::deposit_event(Event::Graduated {
+                launch_id,
+                quote_seeded: quote_spent,
+                tokens_seeded: tokens_spent,
+                shares,
+            });
             Ok(())
         }
     }
@@ -760,7 +885,9 @@ pub mod pallet {
         /// runtime binds `pallet_vitreus_dex::Config::CreatorFeeRecipient`
         /// to this through an adapter; the DEX itself knows no creators.
         pub fn creator_fee_recipient_for(asset: AssetIdOf<T>) -> Option<T::AccountId> {
-            AssetToLaunch::<T>::get(asset).and_then(Launches::<T>::get).map(|l| l.creator_fee_recipient)
+            AssetToLaunch::<T>::get(asset)
+                .and_then(Launches::<T>::get)
+                .map(|l| l.creator_fee_recipient)
         }
 
         /// `Reserved = TotalSupply − Sellable`.
@@ -807,7 +934,8 @@ pub mod pallet {
 
         pub fn validate_params(p: &LaunchParams<BalanceOf<T>>) -> DispatchResult {
             ensure!(
-                p.graduation_target >= T::MinGraduationTarget::get() && p.graduation_target <= T::MaxGraduationTarget::get(),
+                p.graduation_target >= T::MinGraduationTarget::get()
+                    && p.graduation_target <= T::MaxGraduationTarget::get(),
                 Error::<T>::ParamsOutOfBounds
             );
             ensure!(p.curve_fee_bps <= T::MaxCurveFeeBps::get(), Error::<T>::ParamsOutOfBounds);
@@ -846,7 +974,11 @@ pub mod pallet {
 
         /// Split a fee: protocol and treasury parts floor, creator gets the
         /// rest. Returns `(protocol, treasury, creator)`.
-        fn split_fee(fee: u128, protocol_share_bps: u16, treasury_share_bps: u16) -> (u128, u128, u128) {
+        fn split_fee(
+            fee: u128,
+            protocol_share_bps: u16,
+            treasury_share_bps: u16,
+        ) -> (u128, u128, u128) {
             let protocol = fee.saturating_mul(protocol_share_bps as u128) / (BPS as u128);
             let treasury = fee.saturating_mul(treasury_share_bps as u128) / (BPS as u128);
             (protocol, treasury, fee - protocol - treasury)
@@ -869,7 +1001,12 @@ pub mod pallet {
                 None => (protocol + treasury, 0),
             };
             if protocol > 0 {
-                T::Currency::transfer(&launch.escrow, treasury_recipient, protocol.into(), Preserve)?;
+                T::Currency::transfer(
+                    &launch.escrow,
+                    treasury_recipient,
+                    protocol.into(),
+                    Preserve,
+                )?;
             }
             if let Some(vault) = sink {
                 T::Currency::transfer(&launch.escrow, &vault, treasury.into(), Preserve)?;
@@ -900,7 +1037,8 @@ pub mod pallet {
             ensure!(!quote_in.is_zero(), Error::<T>::ZeroAmount);
 
             let now = frame_system::Pallet::<T>::block_number();
-            let (to_curve, extra) = T::BuyHook::on_buy(launch_id, launch.created_at, now, who, is_creator, quote_in)?;
+            let (to_curve, extra) =
+                T::BuyHook::on_buy(launch_id, launch.created_at, now, who, is_creator, quote_in)?;
             let treasury = T::Treasury::get();
             if !extra.is_zero() {
                 T::Currency::transfer(who, &treasury, extra, Preserve)?;
@@ -909,7 +1047,10 @@ pub mod pallet {
             let terms = Self::terms(&launch.curve);
             let q = curve::quote_buy(
                 &terms,
-                &curve::State { real_quote: state.real_quote.into(), tokens_remaining: state.tokens_remaining.into() },
+                &curve::State {
+                    real_quote: state.real_quote.into(),
+                    tokens_remaining: state.tokens_remaining.into(),
+                },
                 to_curve.into(),
             )
             .map_err(Self::map_math)?;
@@ -919,10 +1060,15 @@ pub mod pallet {
             // funds in
             T::Currency::transfer(who, &launch.escrow, q.quote_used.into(), Preserve)?;
             // fee split
-            let (protocol, treasury_part, creator) =
-                Self::split_fee(q.fee, launch.curve.protocol_share_bps, launch.curve.treasury_share_bps);
-            let (protocol, treasury_part) = Self::pay_fee_parts(&launch, protocol, treasury_part, &treasury)?;
-            state.creator_fees_unclaimed = state.creator_fees_unclaimed.saturating_add(creator.into());
+            let (protocol, treasury_part, creator) = Self::split_fee(
+                q.fee,
+                launch.curve.protocol_share_bps,
+                launch.curve.treasury_share_bps,
+            );
+            let (protocol, treasury_part) =
+                Self::pay_fee_parts(&launch, protocol, treasury_part, &treasury)?;
+            state.creator_fees_unclaimed =
+                state.creator_fees_unclaimed.saturating_add(creator.into());
             state.protocol_fees_paid = state.protocol_fees_paid.saturating_add(protocol);
             state.treasury_fees_paid = state.treasury_fees_paid.saturating_add(treasury_part);
             if is_trade {
@@ -935,7 +1081,13 @@ pub mod pallet {
                 .checked_sub(&tokens_out)
                 .ok_or(Error::<T>::ArithmeticOverflow)?;
             // tokens out
-            T::LaunchAssets::transfer(launch.asset_id, &launch.escrow, who, tokens_out, Expendable)?;
+            T::LaunchAssets::transfer(
+                launch.asset_id,
+                &launch.escrow,
+                who,
+                tokens_out,
+                Expendable,
+            )?;
 
             let crossed = state.tokens_remaining.is_zero();
             if crossed {
@@ -980,7 +1132,10 @@ pub mod pallet {
             let terms = Self::terms(&launch.curve);
             let q = curve::quote_sell(
                 &terms,
-                &curve::State { real_quote: state.real_quote.into(), tokens_remaining: state.tokens_remaining.into() },
+                &curve::State {
+                    real_quote: state.real_quote.into(),
+                    tokens_remaining: state.tokens_remaining.into(),
+                },
                 tokens_in.into(),
             )
             .map_err(Self::map_math)?;
@@ -989,10 +1144,15 @@ pub mod pallet {
 
             T::LaunchAssets::transfer(launch.asset_id, who, &launch.escrow, tokens_in, Expendable)?;
             let treasury = T::Treasury::get();
-            let (protocol, treasury_part, creator) =
-                Self::split_fee(q.fee, launch.curve.protocol_share_bps, launch.curve.treasury_share_bps);
-            let (protocol, treasury_part) = Self::pay_fee_parts(&launch, protocol, treasury_part, &treasury)?;
-            state.creator_fees_unclaimed = state.creator_fees_unclaimed.saturating_add(creator.into());
+            let (protocol, treasury_part, creator) = Self::split_fee(
+                q.fee,
+                launch.curve.protocol_share_bps,
+                launch.curve.treasury_share_bps,
+            );
+            let (protocol, treasury_part) =
+                Self::pay_fee_parts(&launch, protocol, treasury_part, &treasury)?;
+            state.creator_fees_unclaimed =
+                state.creator_fees_unclaimed.saturating_add(creator.into());
             state.protocol_fees_paid = state.protocol_fees_paid.saturating_add(protocol);
             state.treasury_fees_paid = state.treasury_fees_paid.saturating_add(treasury_part);
             state.last_trade_block = frame_system::Pallet::<T>::block_number();
@@ -1003,7 +1163,13 @@ pub mod pallet {
             state.tokens_remaining = state.tokens_remaining.saturating_add(tokens_in);
             T::Currency::transfer(&launch.escrow, who, quote_out, Preserve)?;
             Curves::<T>::insert(launch_id, &state);
-            Self::deposit_event(Event::Sold { launch_id, who: who.clone(), tokens_in, fee: q.fee.into(), quote_out });
+            Self::deposit_event(Event::Sold {
+                launch_id,
+                who: who.clone(),
+                tokens_in,
+                fee: q.fee.into(),
+                quote_out,
+            });
             Ok(())
         }
 
@@ -1040,25 +1206,37 @@ pub mod pallet {
         }
 
         /// Read-only quotes for a frontend / runtime API (§3.5). Never reimplement the math elsewhere.
-        pub fn quote_buy(launch_id: LaunchId, quote_in: BalanceOf<T>) -> Result<curve::BuyQuote, DispatchError> {
+        pub fn quote_buy(
+            launch_id: LaunchId,
+            quote_in: BalanceOf<T>,
+        ) -> Result<curve::BuyQuote, DispatchError> {
             let launch = Launches::<T>::get(launch_id).ok_or(Error::<T>::LaunchNotFound)?;
             let s = Curves::<T>::get(launch_id).ok_or(Error::<T>::LaunchNotFound)?;
             ensure!(s.phase == Phase::Trading, Error::<T>::WrongPhase);
             curve::quote_buy(
                 &Self::terms(&launch.curve),
-                &curve::State { real_quote: s.real_quote.into(), tokens_remaining: s.tokens_remaining.into() },
+                &curve::State {
+                    real_quote: s.real_quote.into(),
+                    tokens_remaining: s.tokens_remaining.into(),
+                },
                 quote_in.into(),
             )
             .map_err(Self::map_math)
         }
 
-        pub fn quote_sell(launch_id: LaunchId, tokens_in: BalanceOf<T>) -> Result<curve::SellQuote, DispatchError> {
+        pub fn quote_sell(
+            launch_id: LaunchId,
+            tokens_in: BalanceOf<T>,
+        ) -> Result<curve::SellQuote, DispatchError> {
             let launch = Launches::<T>::get(launch_id).ok_or(Error::<T>::LaunchNotFound)?;
             let s = Curves::<T>::get(launch_id).ok_or(Error::<T>::LaunchNotFound)?;
             ensure!(s.phase == Phase::Trading, Error::<T>::WrongPhase);
             curve::quote_sell(
                 &Self::terms(&launch.curve),
-                &curve::State { real_quote: s.real_quote.into(), tokens_remaining: s.tokens_remaining.into() },
+                &curve::State {
+                    real_quote: s.real_quote.into(),
+                    tokens_remaining: s.tokens_remaining.into(),
+                },
                 tokens_in.into(),
             )
             .map_err(Self::map_math)
@@ -1084,7 +1262,13 @@ pub mod pallet {
         pub fn invariant_k(launch_id: LaunchId) -> Option<U256> {
             let terms = Self::curve_terms(launch_id)?;
             let s = Curves::<T>::get(launch_id)?;
-            curve::invariant_k(&terms, &curve::State { real_quote: s.real_quote.into(), tokens_remaining: s.tokens_remaining.into() })
+            curve::invariant_k(
+                &terms,
+                &curve::State {
+                    real_quote: s.real_quote.into(),
+                    tokens_remaining: s.tokens_remaining.into(),
+                },
+            )
         }
 
         /// The names of every dispatchable, for FM-03's "no withdraw path" assertion.
@@ -1093,7 +1277,9 @@ pub mod pallet {
         }
     }
 
-    impl<T: Config> CurveVenue<T::AccountId, T::AssetId, BalanceOf<T>, BlockNumberFor<T>> for Pallet<T> {
+    impl<T: Config> CurveVenue<T::AccountId, T::AssetId, BalanceOf<T>, BlockNumberFor<T>>
+        for Pallet<T>
+    {
         fn launch_of_asset(asset: T::AssetId) -> Option<LaunchId> {
             AssetToLaunch::<T>::get(asset)
         }
@@ -1130,7 +1316,14 @@ pub mod pallet {
             let launch = Launches::<T>::get(launch_id).ok_or(Error::<T>::LaunchNotFound)?;
             // An in-runtime buy on the token's behalf is not a trade for the
             // dormancy clock (R2).
-            let (_, tokens_out) = Self::do_buy(who, launch_id, quote_in, min_tokens_out, *who == launch.creator, false)?;
+            let (_, tokens_out) = Self::do_buy(
+                who,
+                launch_id,
+                quote_in,
+                min_tokens_out,
+                *who == launch.creator,
+                false,
+            )?;
             Ok(tokens_out)
         }
     }

@@ -33,14 +33,14 @@ pub use pallet::*;
 pub mod weights;
 pub use weights::WeightInfo;
 
+#[cfg(feature = "runtime-benchmarks")]
+pub mod benchmarking;
+#[cfg(test)]
+mod fuzz;
 #[cfg(test)]
 mod mock;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod fuzz;
-#[cfg(feature = "runtime-benchmarks")]
-pub mod benchmarking;
 #[cfg(feature = "runtime-benchmarks")]
 pub use benchmarking::BenchmarkHelper;
 
@@ -134,7 +134,9 @@ pub struct TreasuryTerms<Balance, BlockNumber> {
 pub enum TreasuryStatus {
     Active,
     /// Shares redeemed and unbonded; the chunk matures at `chunk_era`.
-    Retiring { chunk_era: EraIndex },
+    Retiring {
+        chunk_era: EraIndex,
+    },
     /// Principal withdrawn into `pending_burn`; closes when it is burned.
     Retired,
 }
@@ -224,8 +226,13 @@ pub mod pallet {
     // ---- storage (§5) ---------------------------------------------------
 
     #[pallet::storage]
-    pub type Treasuries<T: Config> =
-        StorageMap<_, Twox64Concat, LaunchId, TreasuryRecord<BalanceOf<T>, BlockNumberFor<T>>, OptionQuery>;
+    pub type Treasuries<T: Config> = StorageMap<
+        _,
+        Twox64Concat,
+        LaunchId,
+        TreasuryRecord<BalanceOf<T>, BlockNumberFor<T>>,
+        OptionQuery,
+    >;
 
     #[pallet::storage]
     pub type TotalShares<T: Config> = StorageValue<_, BalanceOf<T>, ValueQuery>;
@@ -247,11 +254,16 @@ pub mod pallet {
     }
 
     #[pallet::storage]
-    pub type Terms<T: Config> =
-        StorageValue<_, TreasuryTerms<BalanceOf<T>, BlockNumberFor<T>>, ValueQuery, DefaultTermsValue<T>>;
+    pub type Terms<T: Config> = StorageValue<
+        _,
+        TreasuryTerms<BalanceOf<T>, BlockNumberFor<T>>,
+        ValueQuery,
+        DefaultTermsValue<T>,
+    >;
 
     #[pallet::storage]
-    pub type Targets<T: Config> = StorageValue<_, BoundedVec<T::AccountId, T::MaxTargets>, ValueQuery>;
+    pub type Targets<T: Config> =
+        StorageValue<_, BoundedVec<T::AccountId, T::MaxTargets>, ValueQuery>;
 
     /// True between a bond change whose re-cooperate failed and the next
     /// successful `retarget` (§6.2). `false` ⇒ cooperated == active (I-T7).
@@ -272,8 +284,11 @@ pub mod pallet {
     /// boundaries (chunks that mature in one era are merged by the staking
     /// pallet).
     #[pallet::storage]
-    pub type RetiringQueue<T: Config> =
-        StorageValue<_, BoundedVec<(LaunchId, EraIndex, BalanceOf<T>), T::MaxUnlockingChunks>, ValueQuery>;
+    pub type RetiringQueue<T: Config> = StorageValue<
+        _,
+        BoundedVec<(LaunchId, EraIndex, BalanceOf<T>), T::MaxUnlockingChunks>,
+        ValueQuery,
+    >;
 
     // ---- events / errors (§6.8) -----------------------------------------
 
@@ -281,13 +296,26 @@ pub mod pallet {
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
         /// A fee slice reached the vault for this launch.
-        FeeNoted { launch_id: LaunchId, amount: BalanceOf<T> },
-        Staked { launch_id: LaunchId, amount: BalanceOf<T>, shares: BalanceOf<T> },
-        Retargeted { targets: Vec<(T::AccountId, BalanceOf<T>)> },
+        FeeNoted {
+            launch_id: LaunchId,
+            amount: BalanceOf<T>,
+        },
+        Staked {
+            launch_id: LaunchId,
+            amount: BalanceOf<T>,
+            shares: BalanceOf<T>,
+        },
+        Retargeted {
+            targets: Vec<(T::AccountId, BalanceOf<T>)>,
+        },
         /// A bond change could not be followed by `cooperate`; the bond
         /// stands, the cooperation is stale until a `retarget` succeeds.
-        CooperationStale { reason: DispatchError },
-        Harvested { lnrg: BalanceOf<T> },
+        CooperationStale {
+            reason: DispatchError,
+        },
+        Harvested {
+            lnrg: BalanceOf<T>,
+        },
         Compounded {
             launch_id: LaunchId,
             lnrg_sold: BalanceOf<T>,
@@ -296,12 +324,24 @@ pub mod pallet {
             vtrs_burned_in: BalanceOf<T>,
             tokens_burned: BalanceOf<T>,
         },
-        Retiring { launch_id: LaunchId, amount: BalanceOf<T>, chunk_era: EraIndex },
-        Retired { launch_id: LaunchId, amount: BalanceOf<T> },
+        Retiring {
+            launch_id: LaunchId,
+            amount: BalanceOf<T>,
+            chunk_era: EraIndex,
+        },
+        Retired {
+            launch_id: LaunchId,
+            amount: BalanceOf<T>,
+        },
         /// A retired treasury's sub-minimum remainder went to the protocol recipient.
-        DustSwept { launch_id: LaunchId, amount: BalanceOf<T> },
+        DustSwept {
+            launch_id: LaunchId,
+            amount: BalanceOf<T>,
+        },
         TermsSet,
-        TargetsSet { targets: Vec<T::AccountId> },
+        TargetsSet {
+            targets: Vec<T::AccountId>,
+        },
     }
 
     #[pallet::error]
@@ -443,7 +483,9 @@ pub mod pallet {
         }
 
         fn assets_balance(asset: AssetKindOf<T>, who: &T::AccountId) -> BalanceOf<T> {
-            <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::balance(asset, who)
+            <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::balance(
+                asset, who,
+            )
         }
 
         fn protocol_recipient() -> T::AccountId {
@@ -471,7 +513,11 @@ pub mod pallet {
             Some(<T as pallet_launchpad::Config>::IntoAssetKind::convert(id))
         }
 
-        fn mul_div(a: BalanceOf<T>, b: BalanceOf<T>, c: BalanceOf<T>) -> Result<BalanceOf<T>, Error<T>> {
+        fn mul_div(
+            a: BalanceOf<T>,
+            b: BalanceOf<T>,
+            c: BalanceOf<T>,
+        ) -> Result<BalanceOf<T>, Error<T>> {
             let (a, b, c): (u128, u128, u128) = (a.into(), b.into(), c.into());
             if c == 0 {
                 return Err(Error::<T>::ArithmeticOverflow);
@@ -519,7 +565,9 @@ pub mod pallet {
             Ok(())
         }
 
-        fn checkpoint(t: &mut TreasuryRecord<BalanceOf<T>, BlockNumberFor<T>>) -> Result<(), Error<T>> {
+        fn checkpoint(
+            t: &mut TreasuryRecord<BalanceOf<T>, BlockNumberFor<T>>,
+        ) -> Result<(), Error<T>> {
             t.lnrg_debt = Self::owed_gross(t.shares)?;
             Ok(())
         }
@@ -549,7 +597,11 @@ pub mod pallet {
             ensure!(!added.is_zero(), Error::<T>::NothingToDo);
             t.pending = p.saturating_sub(added);
 
-            let shares = if total_shares.is_zero() { added } else { Self::mul_div(added, total_shares, active_before)? };
+            let shares = if total_shares.is_zero() {
+                added
+            } else {
+                Self::mul_div(added, total_shares, active_before)?
+            };
             t.shares = t.shares.saturating_add(shares);
             TotalShares::<T>::put(total_shares.saturating_add(shares));
             Self::checkpoint(&mut t)?;
@@ -578,8 +630,10 @@ pub mod pallet {
             let vault = Self::vault();
             let active = T::Staking::active(&vault);
             ensure!(active >= T::Staking::min_cooperator_bond(), Error::<T>::NothingToDo);
-            let survivors: Vec<T::AccountId> =
-                Targets::<T>::get().into_iter().filter(|v| T::Staking::is_cooperable(v)).collect();
+            let survivors: Vec<T::AccountId> = Targets::<T>::get()
+                .into_iter()
+                .filter(|v| T::Staking::is_cooperable(v))
+                .collect();
             ensure!(!survivors.is_empty(), Error::<T>::NoTargets);
             let n: u128 = survivors.len() as u128;
             let a: u128 = active.into();
@@ -601,28 +655,33 @@ pub mod pallet {
         /// Largest `x ≤ want` whose VTRS quote the broker can pay.
         fn sellable(want: BalanceOf<T>) -> Option<(BalanceOf<T>, BalanceOf<T>)> {
             let (lnrg, native) = (T::LnrgAsset::get(), Self::native());
-            let depth = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::reducible_balance(
-                native.clone(),
-                &T::BrokerAccount::get(),
-                Preserve,
-                Polite,
+            let depth = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<
+                T::AccountId,
+            >>::reducible_balance(
+                native.clone(), &T::BrokerAccount::get(), Preserve, Polite
             );
             // R8: the broker takes the input with `keep_alive`, so the vault
             // can part with its reducible LNRG and no more — balance minus
             // the asset's min balance. A claim that equals the whole balance
             // (the accumulator attributes without a remainder every so
             // often) must not ask for the whole balance.
-            let can_part_with = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::reducible_balance(
-                lnrg.clone(),
-                &Self::vault(),
-                Preserve,
-                Polite,
+            let can_part_with = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<
+                T::AccountId,
+            >>::reducible_balance(
+                lnrg.clone(), &Self::vault(), Preserve, Polite
             );
             let want = want.min(can_part_with);
             if depth.is_zero() || want.is_zero() {
                 return None;
             }
-            let quote = |x: BalanceOf<T>| T::Exchange::quote_price_exact_tokens_for_tokens(lnrg.clone(), native.clone(), x, true);
+            let quote = |x: BalanceOf<T>| {
+                T::Exchange::quote_price_exact_tokens_for_tokens(
+                    lnrg.clone(),
+                    native.clone(),
+                    x,
+                    true,
+                )
+            };
             let mut x = want;
             let mut q = quote(x)?;
             // The broker's rate is linear, so one proportional step lands
@@ -652,7 +711,8 @@ pub mod pallet {
             Self::settle(&mut t)?;
 
             // Sell.
-            let (mut lnrg_sold, mut realised, mut bounty) = (BalanceOf::<T>::zero(), BalanceOf::<T>::zero(), BalanceOf::<T>::zero());
+            let (mut lnrg_sold, mut realised, mut bounty) =
+                (BalanceOf::<T>::zero(), BalanceOf::<T>::zero(), BalanceOf::<T>::zero());
             if let Some((x, q)) = Self::sellable(t.lnrg_accrued) {
                 let min_out = q.saturating_sub(q / 1_000u32.into());
                 let out = T::Exchange::swap_exact_tokens_for_tokens(
@@ -670,8 +730,14 @@ pub mod pallet {
                 LnrgAccounted::<T>::mutate(|a| *a = a.saturating_sub(x));
                 lnrg_sold = x;
                 realised = out;
-                bounty = Self::mul_div(out, (terms.keeper_bounty_bps as u128).into(), (BPS as u128).into())?;
-                let ed = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::minimum_balance(Self::native());
+                bounty = Self::mul_div(
+                    out,
+                    (terms.keeper_bounty_bps as u128).into(),
+                    (BPS as u128).into(),
+                )?;
+                let ed = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<
+                    T::AccountId,
+                >>::minimum_balance(Self::native());
                 if bounty >= ed {
                     <<T as pallet_vitreus_dex::Config>::Assets as FungiblesMutate<T::AccountId>>::transfer(
                         Self::native(),
@@ -694,12 +760,19 @@ pub mod pallet {
             // is a partial fill (`do_buy` takes `quote_used`, not the offer).
             // So what was spent is the vault's balance delta corrected for
             // what arrived, and `pending` is re-read.
-            let (mut burned_in, mut tokens_burned) = (BalanceOf::<T>::zero(), BalanceOf::<T>::zero());
-            if !t.pending_burn.is_zero() && now.saturating_sub(t.last_burn_block) >= terms.min_burn_interval {
+            let (mut burned_in, mut tokens_burned) =
+                (BalanceOf::<T>::zero(), BalanceOf::<T>::zero());
+            if !t.pending_burn.is_zero()
+                && now.saturating_sub(t.last_burn_block) >= terms.min_burn_interval
+            {
                 let before = Self::assets_balance(Self::native(), &vault);
                 let pending_before = t.pending;
-                if let Some(tokens) = Self::burn_slice(&vault, launch_id, t.pending_burn, terms.max_burn_impact_bps)? {
-                    t.pending = Treasuries::<T>::get(launch_id).map(|f| f.pending).unwrap_or(pending_before);
+                if let Some(tokens) =
+                    Self::burn_slice(&vault, launch_id, t.pending_burn, terms.max_burn_impact_bps)?
+                {
+                    t.pending = Treasuries::<T>::get(launch_id)
+                        .map(|f| f.pending)
+                        .unwrap_or(pending_before);
                     let arrived = t.pending.saturating_sub(pending_before);
                     let after = Self::assets_balance(Self::native(), &vault);
                     let spent = before.saturating_add(arrived).saturating_sub(after);
@@ -713,15 +786,19 @@ pub mod pallet {
                     // ED or not at all. A retired launch's principal goes
                     // out over many slices with nothing to sell, and the
                     // keeper that runs them is paid for each (§6.4).
-                    let slice_bounty = Self::mul_div(spent, (terms.keeper_bounty_bps as u128).into(), (BPS as u128).into())?;
-                    let ed = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::minimum_balance(Self::native());
+                    let slice_bounty = Self::mul_div(
+                        spent,
+                        (terms.keeper_bounty_bps as u128).into(),
+                        (BPS as u128).into(),
+                    )?;
+                    let ed = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<
+                        T::AccountId,
+                    >>::minimum_balance(Self::native());
                     if slice_bounty >= ed && slice_bounty <= t.pending_burn {
-                        <<T as pallet_vitreus_dex::Config>::Assets as FungiblesMutate<T::AccountId>>::transfer(
-                            Self::native(),
-                            &vault,
-                            caller,
-                            slice_bounty,
-                            Preserve,
+                        <<T as pallet_vitreus_dex::Config>::Assets as FungiblesMutate<
+                            T::AccountId,
+                        >>::transfer(
+                            Self::native(), &vault, caller, slice_bounty, Preserve
                         )?;
                         t.pending_burn = t.pending_burn.saturating_sub(slice_bounty);
                         bounty = bounty.saturating_add(slice_bounty);
@@ -734,8 +811,11 @@ pub mod pallet {
             // stays, as `Retired` with nothing in it. It is never removed —
             // a launch with no record is one that was never funded, and
             // `account_for` would fund it again on the next trade (R3).
-            if t.status == TreasuryStatus::Retired && t.shares.is_zero() && t.lnrg_accrued.is_zero() {
-                let ed = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::minimum_balance(Self::native());
+            if t.status == TreasuryStatus::Retired && t.shares.is_zero() && t.lnrg_accrued.is_zero()
+            {
+                let ed = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<
+                    T::AccountId,
+                >>::minimum_balance(Self::native());
                 if !t.pending_burn.is_zero() && t.pending_burn < ed && t.pending.is_zero() {
                     <<T as pallet_vitreus_dex::Config>::Assets as FungiblesMutate<T::AccountId>>::transfer(
                         Self::native(),
@@ -778,10 +858,15 @@ pub mod pallet {
         ) -> Result<Option<BalanceOf<T>>, DispatchError> {
             type Venue<T> = pallet_launchpad::Pallet<T>;
             let asset = Self::asset_kind_of(launch_id).ok_or(Error::<T>::NoTreasury)?;
-            let phase = <Venue<T> as CurveVenue<_, _, _, _>>::phase(launch_id).ok_or(Error::<T>::NoTreasury)?;
+            let phase = <Venue<T> as CurveVenue<_, _, _, _>>::phase(launch_id)
+                .ok_or(Error::<T>::NoTreasury)?;
             let quote_reserve = match phase {
-                Phase::Graduated => <T as pallet_launchpad::Config>::Dex::native_reserves(asset.clone()).map(|(q, _)| q),
-                Phase::Trading => <Venue<T> as CurveVenue<_, _, _, _>>::virtual_reserves(launch_id).map(|(q, _)| q),
+                Phase::Graduated => {
+                    <T as pallet_launchpad::Config>::Dex::native_reserves(asset.clone())
+                        .map(|(q, _)| q)
+                },
+                Phase::Trading => <Venue<T> as CurveVenue<_, _, _, _>>::virtual_reserves(launch_id)
+                    .map(|(q, _)| q),
                 Phase::Complete => None,
             };
             let Some(quote_reserve) = quote_reserve else { return Ok(None) };
@@ -795,20 +880,33 @@ pub mod pallet {
                 _ => <Venue<T> as CurveVenue<_, _, _, _>>::fee_bps(launch_id),
             }
             .unwrap_or(0);
-            let impact_bps = impact_bps.min((venue_fee_bps as u32).saturating_mul(2).saturating_sub(1).min(u16::MAX as u32) as u16);
+            let impact_bps = impact_bps.min(
+                (venue_fee_bps as u32).saturating_mul(2).saturating_sub(1).min(u16::MAX as u32)
+                    as u16,
+            );
             if impact_bps == 0 {
                 return Ok(None);
             }
-            let cap = Self::mul_div(quote_reserve, (impact_bps as u128).into(), (2 * BPS as u128).into())?;
+            let cap = Self::mul_div(
+                quote_reserve,
+                (impact_bps as u128).into(),
+                (2 * BPS as u128).into(),
+            )?;
             let y = pending.min(cap);
             if y.is_zero() {
                 return Ok(None);
             }
             let bought = match phase {
-                Phase::Graduated => {
-                    <T as pallet_launchpad::Config>::Dex::swap_for(vault, Self::native(), asset.clone(), y, Zero::zero())
+                Phase::Graduated => <T as pallet_launchpad::Config>::Dex::swap_for(
+                    vault,
+                    Self::native(),
+                    asset.clone(),
+                    y,
+                    Zero::zero(),
+                ),
+                _ => {
+                    <Venue<T> as CurveVenue<_, _, _, _>>::buy_for(vault, launch_id, y, Zero::zero())
                 },
-                _ => <Venue<T> as CurveVenue<_, _, _, _>>::buy_for(vault, launch_id, y, Zero::zero()),
             };
             // A slice the venue cannot quote (dust under the curve's fee
             // rounding) is nothing to burn this call, not an error that
@@ -860,7 +958,11 @@ pub mod pallet {
 
             let total = TotalShares::<T>::get();
             let active = T::Staking::active(&vault);
-            let v = if t.shares.is_zero() || total.is_zero() { Zero::zero() } else { Self::mul_div(t.shares, active, total)? };
+            let v = if t.shares.is_zero() || total.is_zero() {
+                Zero::zero()
+            } else {
+                Self::mul_div(t.shares, active, total)?
+            };
             // Unstaked fees retire with the rest.
             t.pending_burn = t.pending_burn.saturating_add(t.pending);
             t.pending = Zero::zero();
@@ -872,11 +974,14 @@ pub mod pallet {
                 let mut queue = RetiringQueue::<T>::get();
                 ensure!(queue.len() < T::MaxUnlockingChunks::get() as usize, Error::<T>::QueueFull);
                 let remaining = active.saturating_sub(v);
-                if remaining < T::Staking::min_cooperator_bond() && T::Staking::is_cooperating(&vault) {
+                if remaining < T::Staking::min_cooperator_bond()
+                    && T::Staking::is_cooperating(&vault)
+                {
                     T::Staking::chill(&vault)?;
                 }
                 T::Staking::unbond(&vault, v)?;
-                let chunk_era = T::Staking::current_era().saturating_add(T::Staking::bonding_duration());
+                let chunk_era =
+                    T::Staking::current_era().saturating_add(T::Staking::bonding_duration());
                 queue.try_push((launch_id, chunk_era, v)).map_err(|_| Error::<T>::QueueFull)?;
                 RetiringQueue::<T>::put(queue);
                 t.status = TreasuryStatus::Retiring { chunk_era };
@@ -895,7 +1000,9 @@ pub mod pallet {
 
         pub fn do_finalize(launch_id: LaunchId) -> DispatchResult {
             let t = Treasuries::<T>::get(launch_id).ok_or(Error::<T>::NoTreasury)?;
-            let TreasuryStatus::Retiring { chunk_era } = t.status else { return Err(Error::<T>::NotRetiring.into()) };
+            let TreasuryStatus::Retiring { chunk_era } = t.status else {
+                return Err(Error::<T>::NotRetiring.into());
+            };
             let era = T::Staking::current_era();
             ensure!(era >= chunk_era, Error::<T>::NotMatured);
 
@@ -905,8 +1012,10 @@ pub mod pallet {
             // Every matured entry is credited, pro rata to what actually
             // came back (a slash during unbonding reduces the chunks too).
             let queue = RetiringQueue::<T>::get();
-            let (matured, waiting): (Vec<_>, Vec<_>) = queue.into_iter().partition(|(_, e, _)| *e <= era);
-            let expected = matured.iter().fold(BalanceOf::<T>::zero(), |a, (_, _, v)| a.saturating_add(*v));
+            let (matured, waiting): (Vec<_>, Vec<_>) =
+                queue.into_iter().partition(|(_, e, _)| *e <= era);
+            let expected =
+                matured.iter().fold(BalanceOf::<T>::zero(), |a, (_, _, v)| a.saturating_add(*v));
             ensure!(!expected.is_zero(), Error::<T>::NothingToDo);
             let mut credited_total = BalanceOf::<T>::zero();
             let n = matured.len();
@@ -982,7 +1091,10 @@ pub mod pallet {
             let accounted = LnrgAccounted::<T>::get();
             let lnrg = Self::assets_balance(T::LnrgAsset::get(), &vault);
             frame_support::ensure!(claims <= accounted, "I-T2: claims exceed LnrgAccounted");
-            frame_support::ensure!(accounted <= lnrg, "I-T2: LnrgAccounted exceeds the vault's LNRG");
+            frame_support::ensure!(
+                accounted <= lnrg,
+                "I-T2: LnrgAccounted exceeds the vault's LNRG"
+            );
             // The ED buffer is there once the upgrade or the first fee put it
             // there (§9.6); before that the vault holds nothing unaccounted.
             let ed = if VaultFunded::<T>::get() {
@@ -991,18 +1103,27 @@ pub mod pallet {
                 Zero::zero()
             };
             let held = Self::assets_balance(Self::native(), &vault);
-            let expected = ed.saturating_add(pending).saturating_add(pending_burn).saturating_add(T::Staking::total(&vault));
+            let expected = ed
+                .saturating_add(pending)
+                .saturating_add(pending_burn)
+                .saturating_add(T::Staking::total(&vault));
             // A floor, not an equality: anyone can send the vault VTRS, and
             // nothing accounts for it or moves it. What the invariant guards
             // is that the records never claim more than the vault holds (R5).
-            frame_support::ensure!(held >= expected, "I-T1: vault VTRS < ED + pending + pending_burn + ledger.total");
+            frame_support::ensure!(
+                held >= expected,
+                "I-T1: vault VTRS < ED + pending + pending_burn + ledger.total"
+            );
             if !CooperationStale::<T>::get() && T::Staking::is_cooperating(&vault) {
                 // Exact after this pallet's own retarget; a slash in between
                 // scales each target down with a floor (energy-generation's
                 // `adjust_cooperator_targets`), one unit per target at most.
                 let (c, a) = (T::Staking::cooperated(&vault), T::Staking::active(&vault));
                 let k: BalanceOf<T> = (T::MaxTargets::get() as u128).into();
-                frame_support::ensure!(c <= a && a.saturating_sub(c) <= k, "I-T7: cooperated != active");
+                frame_support::ensure!(
+                    c <= a && a.saturating_sub(c) <= k,
+                    "I-T7: cooperated != active"
+                );
             }
             Ok(())
         }
@@ -1032,7 +1153,9 @@ pub mod pallet {
                 amount
             } else {
                 VaultFunded::<T>::put(true);
-                let ed = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::minimum_balance(Self::native());
+                let ed = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<
+                    T::AccountId,
+                >>::minimum_balance(Self::native());
                 amount.saturating_sub(ed)
             };
             Treasuries::<T>::mutate(launch_id, |maybe| {

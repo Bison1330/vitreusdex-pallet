@@ -8,7 +8,9 @@ use crate as pallet_launchpad;
 
 use frame_support::{
     construct_runtime, derive_impl, parameter_types,
-    traits::{AsEnsureOriginWithArg, ConstU128, ConstU16, ConstU32, ConstU64, Contains, InstanceFilter},
+    traits::{
+        AsEnsureOriginWithArg, ConstU128, ConstU16, ConstU32, ConstU64, Contains, InstanceFilter,
+    },
     PalletId,
 };
 use frame_system::{EnsureRoot, EnsureSigned};
@@ -200,7 +202,18 @@ impl pallet_utility::Config for Test {
 }
 
 #[derive(
-    Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Encode, Decode, RuntimeDebug, MaxEncodedLen, TypeInfo, Default,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Encode,
+    Decode,
+    RuntimeDebug,
+    MaxEncodedLen,
+    TypeInfo,
+    Default,
 )]
 pub enum ProxyType {
     #[default]
@@ -287,11 +300,23 @@ impl OnCurveBuy<Acc, u128, u64> for RecordingHook {
         is_creator: bool,
         quote_in: u128,
     ) -> Result<(u128, u128), DispatchError> {
-        HOOK_CALLS.with(|c| c.borrow_mut().push((launch_id, launch_created_at, now, who.clone(), is_creator, quote_in)));
+        HOOK_CALLS.with(|c| {
+            c.borrow_mut().push((
+                launch_id,
+                launch_created_at,
+                now,
+                who.clone(),
+                is_creator,
+                quote_in,
+            ))
+        });
         if HOOK_BLACKLIST.with(|b| b.borrow().as_ref() == Some(who)) {
             return Err(DispatchError::Other("hook: blacklisted"));
         }
-        if HOOK_REJECT_CREATION_BLOCK.with(|r| *r.borrow()) && now == launch_created_at && !is_creator {
+        if HOOK_REJECT_CREATION_BLOCK.with(|r| *r.borrow())
+            && now == launch_created_at
+            && !is_creator
+        {
             return Err(DispatchError::Other("hook: not in creation block"));
         }
         Ok((quote_in, 0))

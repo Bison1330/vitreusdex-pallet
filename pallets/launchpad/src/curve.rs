@@ -153,7 +153,13 @@ pub fn quote_buy(t: &Terms, s: &State, q_in: u128) -> Result<BuyQuote, MathError
 
     // 6. normal fill vs. crossing (partial) fill
     if t_out < s.tokens_remaining {
-        return Ok(BuyQuote { tokens_out: t_out, quote_used: q_in, quote_net_used: q_net, fee, crossed: false });
+        return Ok(BuyQuote {
+            tokens_out: t_out,
+            quote_used: q_in,
+            quote_net_used: q_net,
+            fee,
+            crossed: false,
+        });
     }
 
     // Crossing: deliver exactly what is left; charge exactly what the curve
@@ -270,8 +276,20 @@ mod unit {
         // undershoots 3·V_q by 1.25e-9 relative (the integer rounding of VT_FLOOR).
         let target = 3_000 * UNIT;
         let short = target - r;
-        assert!(short * 1_000_000_000 <= target * 2, "raise {} vs target {} (short {})", r, target, short);
-        assert!(short * 1_000_000_000 >= target, "raise {} vs target {} (short {})", r, target, short);
+        assert!(
+            short * 1_000_000_000 <= target * 2,
+            "raise {} vs target {} (short {})",
+            r,
+            target,
+            short
+        );
+        assert!(
+            short * 1_000_000_000 >= target,
+            "raise {} vs target {} (short {})",
+            r,
+            target,
+            short
+        );
     }
 
     #[test]

@@ -6,10 +6,13 @@
 use crate::{
     curve::{self, MAX_TRADE_IN},
     mock::*,
-    AssetToLaunch, Curves, Error, Event, LaunchId, LaunchParams, Launches, NextLaunchId, Params, Phase,
+    AssetToLaunch, Curves, Error, Event, LaunchId, LaunchParams, Launches, NextLaunchId, Params,
+    Phase,
 };
 use frame_support::{assert_noop, assert_ok};
-use pallet_vitreus_dex::{LiquidityPositions, PoolInfo, PoolManager, Pools, TotalLiquidity, MINIMUM_LIQUIDITY};
+use pallet_vitreus_dex::{
+    LiquidityPositions, PoolInfo, PoolManager, Pools, TotalLiquidity, MINIMUM_LIQUIDITY,
+};
 use sp_core::U256;
 use sp_runtime::{traits::BadOrigin, DispatchError};
 use std::borrow::Borrow;
@@ -60,7 +63,16 @@ fn origin(who: impl Borrow<Acc>) -> RuntimeOrigin {
 /// Create a launch with default terms and no initial buy; returns its id.
 fn create(creator: impl Borrow<Acc>) -> LaunchId {
     let id = NextLaunchId::<Test>::get();
-    assert_ok!(Launchpad::create_launch(origin(creator), bv(b"Meme"), bv(b"MEME"), None, 0, 0, None, None));
+    assert_ok!(Launchpad::create_launch(
+        origin(creator),
+        bv(b"Meme"),
+        bv(b"MEME"),
+        None,
+        0,
+        0,
+        None,
+        None
+    ));
     id
 }
 fn buy(who: impl Borrow<Acc>, id: LaunchId, q: u128) {
@@ -92,7 +104,9 @@ fn deferred_error() -> Option<DispatchError> {
     })
 }
 fn has_event(f: impl Fn(&Event<Test>) -> bool) -> bool {
-    System::events().iter().any(|r| matches!(&r.event, RuntimeEvent::Launchpad(e) if f(e)))
+    System::events()
+        .iter()
+        .any(|r| matches!(&r.event, RuntimeEvent::Launchpad(e) if f(e)))
 }
 fn dex_err(e: pallet_vitreus_dex::Error<Test>) -> DispatchError {
     e.into()
@@ -100,7 +114,14 @@ fn dex_err(e: pallet_vitreus_dex::Error<Test>) -> DispatchError {
 fn set_params(t: u128, fee: u16, share: u16) {
     assert_ok!(Launchpad::set_params(
         RuntimeOrigin::root(),
-        LaunchParams { graduation_target: t, curve_fee_bps: fee, protocol_share_bps: share, treasury_share_bps: 0, pool_fee_tier: 3, creation_fee: CREATION_FEE }
+        LaunchParams {
+            graduation_target: t,
+            curve_fee_bps: fee,
+            protocol_share_bps: share,
+            treasury_share_bps: 0,
+            pool_fee_tier: 3,
+            creation_fee: CREATION_FEE
+        }
     ));
 }
 
@@ -137,7 +158,11 @@ fn check_invariants(id: LaunchId, holders: &[Acc]) {
             let held: u128 = holders.iter().map(|h| tok(id, h)).sum();
             assert_eq!(held, SELLABLE - s.tokens_remaining, "I3");
             // I6
-            assert_eq!(s.phase == Phase::Complete, s.tokens_remaining == 0 && s.graduated_at.is_none(), "I6");
+            assert_eq!(
+                s.phase == Phase::Complete,
+                s.tokens_remaining == 0 && s.graduated_at.is_none(),
+                "I6"
+            );
         },
         Phase::Graduated => {
             assert_eq!(s.tokens_remaining, 0, "I6 graduated");
@@ -160,7 +185,16 @@ fn lifecycle_happy_path() {
     new_test_ext().execute_with(|| {
         let treasury_before = vtrs(TREASURY);
         let id = NextLaunchId::<Test>::get();
-        assert_ok!(Launchpad::create_launch(origin(ALICE), bv(b"Meme"), bv(b"MEME"), None, 5 * UNIT, 0, None, None));
+        assert_ok!(Launchpad::create_launch(
+            origin(ALICE),
+            bv(b"Meme"),
+            bv(b"MEME"),
+            None,
+            5 * UNIT,
+            0,
+            None,
+            None
+        ));
         let l = launch(id);
         assert_eq!(l.asset_id, asset_of(id));
         assert_eq!(Assets::total_supply(asset_of(id)), 1_000_000_000 * UNIT);
@@ -203,7 +237,12 @@ fn lifecycle_happy_path() {
         assert!(diff * U256::from(1_000_000u32) <= rhs, "I7 opening price off by > 1e-6");
         // raised ≈ T
         let t = T_DEFAULT;
-        assert!(quote_seeded <= t && t - quote_seeded <= t / 100_000_000, "raise {} vs T {}", quote_seeded, t);
+        assert!(
+            quote_seeded <= t && t - quote_seeded <= t / 100_000_000,
+            "raise {} vs T {}",
+            quote_seeded,
+            t
+        );
 
         // Position: escrow, locked forever.
         let pos = LiquidityPositions::<Test>::get(&l.escrow, pair(id)).unwrap();
@@ -212,7 +251,10 @@ fn lifecycle_happy_path() {
 
         // Treasury got creation-fee surplus + protocol fees.
         let s = state(id);
-        assert_eq!(vtrs(TREASURY) - treasury_before, s.protocol_fees_paid + (CREATION_FEE - ED - (100 + 2 * 4 + 2 * 4)));
+        assert_eq!(
+            vtrs(TREASURY) - treasury_before,
+            s.protocol_fees_paid + (CREATION_FEE - ED - (100 + 2 * 4 + 2 * 4))
+        );
         assert!(has_event(|e| matches!(e, Event::Graduated { .. })));
     });
 }
@@ -221,7 +263,16 @@ fn lifecycle_happy_path() {
 fn lifecycle_initial_buy_completes_curve() {
     new_test_ext().execute_with(|| {
         let id = NextLaunchId::<Test>::get();
-        assert_ok!(Launchpad::create_launch(origin(ALICE), bv(b"Meme"), bv(b"MEME"), None, 100_000 * UNIT, 0, None, None));
+        assert_ok!(Launchpad::create_launch(
+            origin(ALICE),
+            bv(b"Meme"),
+            bv(b"MEME"),
+            None,
+            100_000 * UNIT,
+            0,
+            None,
+            None
+        ));
         assert_eq!(state(id).phase, Phase::Graduated);
         assert_eq!(tok(id, ALICE), SELLABLE);
         assert!(VitreusDex::pool_exists(native(), kind(id)));
@@ -291,7 +342,15 @@ fn fm01_only_launchpad_can_seed_reserved_pool() {
         cross(BOB, id);
         assert!(VitreusDex::pool_exists(native(), kind(id)));
         // Post-graduation, ordinary LPs may join through the normal path.
-        assert_ok!(VitreusDex::add_liquidity(origin(BOB), native(), kind(id), UNIT, tok(id, BOB), 0, 0));
+        assert_ok!(VitreusDex::add_liquidity(
+            origin(BOB),
+            native(),
+            kind(id),
+            UNIT,
+            tok(id, BOB),
+            0,
+            0
+        ));
     });
 }
 
@@ -304,26 +363,52 @@ fn fm01_seed_into_existing_liquid_pool_is_rejected() {
         // record directly, then add liquidity at ~10^4× p_end (1 VTRS per 1000 tokens).
         Pools::<Test>::insert(
             pair(id),
-            PoolInfo { reserve_a: 0, reserve_b: 0, fee_tier: 3, total_fees_collected: 0, routing: pallet_vitreus_dex::FeeRouting::default(),
-                pool_account: pool_account(id) },
+            PoolInfo {
+                reserve_a: 0,
+                reserve_b: 0,
+                fee_tier: 3,
+                total_fees_collected: 0,
+                routing: pallet_vitreus_dex::FeeRouting::default(),
+                pool_account: pool_account(id),
+            },
         );
         TotalLiquidity::<Test>::insert(pair(id), 0u128);
-        assert_ok!(VitreusDex::do_add_liquidity_for(&BOB, native(), kind(id), UNIT, 1_000 * UNIT, 0, 0));
+        assert_ok!(VitreusDex::do_add_liquidity_for(
+            &BOB,
+            native(),
+            kind(id),
+            UNIT,
+            1_000 * UNIT,
+            0,
+            0
+        ));
 
         let escrow_q = vtrs(escrow(id));
         let escrow_t = tok(id, escrow(id));
         let spent = cross(BOB, id); // buy succeeds ...
         assert!(spent > 0);
         assert_eq!(state(id).phase, Phase::Complete); // ... graduation deferred
-        assert_eq!(deferred_error(), Some(dex_err(pallet_vitreus_dex::Error::<Test>::PoolAlreadySeeded)));
+        assert_eq!(
+            deferred_error(),
+            Some(dex_err(pallet_vitreus_dex::Error::<Test>::PoolAlreadySeeded))
+        );
         assert!(vtrs(escrow(id)) > escrow_q); // the raise is still in escrow
         assert_eq!(tok(id, escrow(id)), RESERVED); // sellable exhausted, reserved still here
         let _ = escrow_t;
 
-        assert_noop!(Launchpad::graduate(origin(CHARLIE), id), dex_err(pallet_vitreus_dex::Error::<Test>::PoolAlreadySeeded));
-        assert_noop!(Launchpad::force_seed_into_existing_pool(RuntimeOrigin::root(), id, 100), Error::<Test>::RescueNotDue);
+        assert_noop!(
+            Launchpad::graduate(origin(CHARLIE), id),
+            dex_err(pallet_vitreus_dex::Error::<Test>::PoolAlreadySeeded)
+        );
+        assert_noop!(
+            Launchpad::force_seed_into_existing_pool(RuntimeOrigin::root(), id, 100),
+            Error::<Test>::RescueNotDue
+        );
         System::set_block_number(System::block_number() + RESCUE_DELAY);
-        assert_noop!(Launchpad::force_seed_into_existing_pool(RuntimeOrigin::root(), id, 100), Error::<Test>::PriceOutOfTolerance);
+        assert_noop!(
+            Launchpad::force_seed_into_existing_pool(RuntimeOrigin::root(), id, 100),
+            Error::<Test>::PriceOutOfTolerance
+        );
         assert_eq!(state(id).phase, Phase::Complete);
         assert_eq!(tok(id, escrow(id)), RESERVED);
     });
@@ -355,9 +440,19 @@ fn fm02_prefunded_pool_account_does_not_move_opening_price() {
         // First swap prices off the stored reserves (sync_reserves finds nothing extra).
         let amount_in = 10 * UNIT;
         let after_fee = amount_in - amount_in * 3 / 1_000;
-        let expected = u128::try_from(U256::from(RESERVED) * U256::from(after_fee) / U256::from(raised + after_fee)).unwrap();
+        let expected = u128::try_from(
+            U256::from(RESERVED) * U256::from(after_fee) / U256::from(raised + after_fee),
+        )
+        .unwrap();
         let before = tok(id, DAVE);
-        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(origin(DAVE), native(), kind(id), amount_in, expected, DAVE));
+        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
+            origin(DAVE),
+            native(),
+            kind(id),
+            amount_in,
+            expected,
+            DAVE
+        ));
         assert_eq!(tok(id, DAVE) - before, expected);
     });
 }
@@ -371,7 +466,15 @@ fn fm03_no_path_moves_escrow_funds_except_curve_and_seed() {
     new_test_ext().execute_with(|| {
         // No withdraw-shaped dispatchable exists.
         let names = Launchpad::call_names();
-        for forbidden in ["force_withdraw", "force_refund", "force_cancel", "force_set_phase", "force_mint", "withdraw", "refund"] {
+        for forbidden in [
+            "force_withdraw",
+            "force_refund",
+            "force_cancel",
+            "force_set_phase",
+            "force_mint",
+            "withdraw",
+            "refund",
+        ] {
             assert!(!names.iter().any(|n| n.contains(forbidden)), "found {forbidden}");
         }
         assert_eq!(names.len(), 10, "a new dispatchable was added; extend this test's call list");
@@ -389,16 +492,41 @@ fn fm03_no_path_moves_escrow_funds_except_curve_and_seed() {
             // neither creator nor recipient, with arguments that make the
             // fund-moving calls no-ops or errors.
             let calls: Vec<RuntimeCall> = vec![
-                RuntimeCall::Launchpad(crate::Call::create_launch { name: bv(b"X"), symbol: bv(b"X"), creator_fee_recipient: None, initial_buy: 0, min_tokens_out: 0, expected_params_hash: None, metadata: None }),
-                RuntimeCall::Launchpad(crate::Call::buy { launch_id: id, quote_in: 0, min_tokens_out: 0 }),
-                RuntimeCall::Launchpad(crate::Call::sell { launch_id: id, tokens_in: 0, min_quote_out: 0 }),
+                RuntimeCall::Launchpad(crate::Call::create_launch {
+                    name: bv(b"X"),
+                    symbol: bv(b"X"),
+                    creator_fee_recipient: None,
+                    initial_buy: 0,
+                    min_tokens_out: 0,
+                    expected_params_hash: None,
+                    metadata: None,
+                }),
+                RuntimeCall::Launchpad(crate::Call::buy {
+                    launch_id: id,
+                    quote_in: 0,
+                    min_tokens_out: 0,
+                }),
+                RuntimeCall::Launchpad(crate::Call::sell {
+                    launch_id: id,
+                    tokens_in: 0,
+                    min_quote_out: 0,
+                }),
                 RuntimeCall::Launchpad(crate::Call::graduate { launch_id: id }),
                 RuntimeCall::Launchpad(crate::Call::claim_creator_fees { launch_id: id }),
-                RuntimeCall::Launchpad(crate::Call::set_creator_fee_recipient { launch_id: id, new: CHARLIE }),
+                RuntimeCall::Launchpad(crate::Call::set_creator_fee_recipient {
+                    launch_id: id,
+                    new: CHARLIE,
+                }),
                 RuntimeCall::Launchpad(crate::Call::set_params { new: Params::<Test>::get() }),
                 RuntimeCall::Launchpad(crate::Call::set_creation_paused { paused: false }),
-                RuntimeCall::Launchpad(crate::Call::force_seed_into_existing_pool { launch_id: id, max_price_deviation_bps: 10_000 }),
-                RuntimeCall::Launchpad(crate::Call::set_launch_metadata { launch_id: id, metadata: meta(b"x", b"y") }),
+                RuntimeCall::Launchpad(crate::Call::force_seed_into_existing_pool {
+                    launch_id: id,
+                    max_price_deviation_bps: 10_000,
+                }),
+                RuntimeCall::Launchpad(crate::Call::set_launch_metadata {
+                    launch_id: id,
+                    metadata: meta(b"x", b"y"),
+                }),
             ];
             assert_eq!(calls.len(), names.len());
             for call in calls {
@@ -410,7 +538,14 @@ fn fm03_no_path_moves_escrow_funds_except_curve_and_seed() {
             }
             // pallet_assets::force_transfer is admin-gated; the admin is the
             // escrow itself, which has no key. An outsider gets NoPermission.
-            assert!(Assets::force_transfer(origin(CHARLIE), asset_of(id).into(), e.clone(), CHARLIE, 1).is_err());
+            assert!(Assets::force_transfer(
+                origin(CHARLIE),
+                asset_of(id).into(),
+                e.clone(),
+                CHARLIE,
+                1
+            )
+            .is_err());
             assert_eq!(snapshot(), before);
         }
     });
@@ -425,14 +560,30 @@ fn fm03_flash_style_complete_then_extract() {
         let spent = cross(BOB, id); // completes and seeds in one call
         assert_eq!(state(id).phase, Phase::Graduated);
         assert_noop!(Launchpad::sell(origin(BOB), id, 1, 0), Error::<Test>::WrongPhase);
-        assert_noop!(Launchpad::claim_creator_fees(origin(BOB), id), Error::<Test>::NotFeeRecipient);
+        assert_noop!(
+            Launchpad::claim_creator_fees(origin(BOB), id),
+            Error::<Test>::NotFeeRecipient
+        );
         assert_noop!(Launchpad::graduate(origin(BOB), id), Error::<Test>::WrongPhase);
-        assert_noop!(Launchpad::force_seed_into_existing_pool(RuntimeOrigin::root(), id, 0), Error::<Test>::WrongPhase);
+        assert_noop!(
+            Launchpad::force_seed_into_existing_pool(RuntimeOrigin::root(), id, 0),
+            Error::<Test>::WrongPhase
+        );
         // The only way back to VTRS is the pool, at p_end with price impact.
         let held = tok(id, BOB);
-        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(origin(BOB), kind(id), native(), held, 0, BOB));
+        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
+            origin(BOB),
+            kind(id),
+            native(),
+            held,
+            0,
+            BOB
+        ));
         assert!(vtrs(BOB) < start, "extracted more than spent");
-        assert!(start - vtrs(BOB) > spent / 100, "round trip cost < 1% of spend — check fee + impact");
+        assert!(
+            start - vtrs(BOB) > spent / 100,
+            "round trip cost < 1% of spend — check fee + impact"
+        );
     });
 }
 
@@ -469,22 +620,44 @@ fn fm05_all_entry_paths_hit_the_hook() {
     new_test_ext().execute_with(|| {
         let id = create(ALICE);
         let calls_before = HOOK_CALLS.with(|c| c.borrow().len());
-        let buy_call = |q: u128| RuntimeCall::Launchpad(crate::Call::buy { launch_id: id, quote_in: q, min_tokens_out: 0 });
+        let buy_call = |q: u128| {
+            RuntimeCall::Launchpad(crate::Call::buy {
+                launch_id: id,
+                quote_in: q,
+                min_tokens_out: 0,
+            })
+        };
 
         // direct
         buy(BOB, id, UNIT);
         // utility.batch_all of 3 buys → 3 hook calls, no aggregation
-        assert_ok!(Utility::batch_all(origin(BOB), vec![buy_call(UNIT), buy_call(2 * UNIT), buy_call(3 * UNIT)]));
+        assert_ok!(Utility::batch_all(
+            origin(BOB),
+            vec![buy_call(UNIT), buy_call(2 * UNIT), buy_call(3 * UNIT)]
+        ));
         // proxy: DAVE acts for CHARLIE → hook sees CHARLIE
         assert_ok!(Proxy::add_proxy(origin(CHARLIE), DAVE, ProxyType::Any, 0));
         assert_ok!(Proxy::proxy(origin(DAVE), CHARLIE, None, Box::new(buy_call(UNIT))));
         // multisig (threshold 1): origin is the multi account
         let multi = Multisig::multi_account_id(&[ALICE, BOB], 1);
         assert_ok!(Balances::transfer_allow_death(origin(ALICE), multi.clone(), 10 * UNIT));
-        assert_ok!(Multisig::as_multi_threshold_1(origin(ALICE), vec![BOB], Box::new(buy_call(UNIT))));
+        assert_ok!(Multisig::as_multi_threshold_1(
+            origin(ALICE),
+            vec![BOB],
+            Box::new(buy_call(UNIT))
+        ));
         // initial buy inside create_launch
         let id2 = NextLaunchId::<Test>::get();
-        assert_ok!(Launchpad::create_launch(origin(ALICE), bv(b"B"), bv(b"B"), None, UNIT, 0, None, None));
+        assert_ok!(Launchpad::create_launch(
+            origin(ALICE),
+            bv(b"B"),
+            bv(b"B"),
+            None,
+            UNIT,
+            0,
+            None,
+            None
+        ));
 
         let calls = HOOK_CALLS.with(|c| c.borrow().clone());
         let new = &calls[calls_before..];
@@ -501,7 +674,10 @@ fn fm05_all_entry_paths_hit_the_hook() {
         HOOK_BLACKLIST.with(|b| *b.borrow_mut() = Some(CHARLIE));
         let err = DispatchError::Other("hook: blacklisted");
         assert_noop!(Launchpad::buy(origin(CHARLIE), id, UNIT, 0), err);
-        frame_support::assert_err_ignore_postinfo!(Utility::batch_all(origin(CHARLIE), vec![buy_call(UNIT)]), err);
+        frame_support::assert_err_ignore_postinfo!(
+            Utility::batch_all(origin(CHARLIE), vec![buy_call(UNIT)]),
+            err
+        );
         // proxy dispatch reports the inner error through an event, not the extrinsic result
         let tokens_before = tok(id, CHARLIE);
         assert_ok!(Proxy::proxy(origin(DAVE), CHARLIE, None, Box::new(buy_call(UNIT))));
@@ -514,7 +690,10 @@ fn fm05_all_entry_paths_hit_the_hook() {
             })
             .collect();
         // the event strips `Other` messages, so match on the variant only
-        assert!(matches!(proxy_results.last(), Some(Err(DispatchError::Other(_)))), "proxy results: {proxy_results:?}");
+        assert!(
+            matches!(proxy_results.last(), Some(Err(DispatchError::Other(_)))),
+            "proxy results: {proxy_results:?}"
+        );
     });
 }
 
@@ -525,10 +704,22 @@ fn fm07_hook_receives_block_numbers_not_time() {
         System::set_block_number(5);
         // creator's atomic buy is exempt (is_creator == true)
         let id = NextLaunchId::<Test>::get();
-        assert_ok!(Launchpad::create_launch(origin(ALICE), bv(b"M"), bv(b"M"), None, UNIT, 0, None, None));
+        assert_ok!(Launchpad::create_launch(
+            origin(ALICE),
+            bv(b"M"),
+            bv(b"M"),
+            None,
+            UNIT,
+            0,
+            None,
+            None
+        ));
         assert_eq!(launch(id).created_at, 5);
         // a non-creator in the creation block is rejected
-        assert_noop!(Launchpad::buy(origin(BOB), id, UNIT, 0), DispatchError::Other("hook: not in creation block"));
+        assert_noop!(
+            Launchpad::buy(origin(BOB), id, UNIT, 0),
+            DispatchError::Other("hook: not in creation block")
+        );
         // the creator's later buy in the same block passes
         buy(ALICE, id, UNIT);
         // next block: everyone passes
@@ -564,10 +755,16 @@ fn fm06_no_creator_lp_and_position_is_permanent() {
             pallet_vitreus_dex::Error::<Test>::PoolLocked
         );
         assert_noop!(
-            <VitreusDex as PoolManager<Acc, NativeOrAssetId, u128, u64>>::lock_liquidity_for(&e, native(), kind(id), System::block_number()),
+            <VitreusDex as PoolManager<Acc, NativeOrAssetId, u128, u64>>::lock_liquidity_for(
+                &e,
+                native(),
+                kind(id),
+                System::block_number()
+            ),
             pallet_vitreus_dex::Error::<Test>::LockCannotBeShortened
         );
-        let positions: Vec<_> = LiquidityPositions::<Test>::iter().filter(|(_, pp, _)| *pp == p).collect();
+        let positions: Vec<_> =
+            LiquidityPositions::<Test>::iter().filter(|(_, pp, _)| *pp == p).collect();
         assert_eq!(positions.len(), 1);
         assert_eq!(positions[0].0, e);
         assert_eq!(positions[0].2.locked_until, Some(u64::MAX));
@@ -588,7 +785,12 @@ fn fm06_no_creator_lp_and_position_is_permanent() {
 fn arm_seed_failure(id: LaunchId, donor: impl Borrow<Acc>) {
     let donor = donor.borrow();
     assert_ok!(Balances::transfer_allow_death(origin(donor), pool_account(id), UNIT));
-    assert_ok!(Assets::transfer(origin(donor), asset_of(id).into(), pool_account(id), 1_000 * UNIT));
+    assert_ok!(Assets::transfer(
+        origin(donor),
+        asset_of(id).into(),
+        pool_account(id),
+        1_000 * UNIT
+    ));
     assert_ok!(Balances::force_set_balance(RuntimeOrigin::root(), EXCESS, 0));
 }
 fn disarm_seed_failure() {
@@ -616,7 +818,10 @@ fn fm08_crossing_buy_partial_fill_and_deferred_seed() {
         };
         buy(CHARLIE, id, q_to_leave_1m);
         let remaining = state(id).tokens_remaining;
-        assert!(remaining > 900_000 * UNIT && remaining < 1_100_000 * UNIT, "remaining {remaining}");
+        assert!(
+            remaining > 900_000 * UNIT && remaining < 1_100_000 * UNIT,
+            "remaining {remaining}"
+        );
 
         arm_seed_failure(id, BOB);
         let quote = Launchpad::quote_buy(id, 3 * q_to_leave_1m).unwrap();
@@ -635,11 +840,17 @@ fn fm08_crossing_buy_partial_fill_and_deferred_seed() {
         assert_eq!(s.phase, Phase::Complete);
         assert_eq!(s.tokens_remaining, 0);
         assert!(s.real_quote > 0);
-        assert_eq!(deferred_error(), Some(dex_err(pallet_vitreus_dex::Error::<Test>::ExcessRecipientCannotReceive)));
+        assert_eq!(
+            deferred_error(),
+            Some(dex_err(pallet_vitreus_dex::Error::<Test>::ExcessRecipientCannotReceive))
+        );
         assert!(!VitreusDex::pool_exists(native(), kind(id)));
         assert_noop!(Launchpad::sell(origin(DAVE), id, 1, 0), Error::<Test>::WrongPhase);
         assert_noop!(Launchpad::buy(origin(DAVE), id, UNIT, 0), Error::<Test>::WrongPhase);
-        assert_noop!(Launchpad::graduate(origin(CHARLIE), id), dex_err(pallet_vitreus_dex::Error::<Test>::ExcessRecipientCannotReceive));
+        assert_noop!(
+            Launchpad::graduate(origin(CHARLIE), id),
+            dex_err(pallet_vitreus_dex::Error::<Test>::ExcessRecipientCannotReceive)
+        );
 
         // unforce → anyone graduates; the pool holds exactly the stored amounts
         disarm_seed_failure();
@@ -677,7 +888,13 @@ fn fm08_min_tokens_out_respected_on_partial_fill() {
 #[test]
 fn fm09_rounding_always_favours_pool() {
     new_test_ext().execute_with(|| {
-        let configs = [(3 * UNIT, 0u16), (3_000 * UNIT, 1), (3_000 * UNIT, 100), (1_000_000 * UNIT, 500), (3_000_000_000 * UNIT, 100)];
+        let configs = [
+            (3 * UNIT, 0u16),
+            (3_000 * UNIT, 1),
+            (3_000 * UNIT, 100),
+            (1_000_000 * UNIT, 500),
+            (3_000_000_000 * UNIT, 100),
+        ];
         let mut rng = Rng(0x1234_5678_9ABC_DEF0);
         let holders = [BOB, CHARLIE, DAVE];
         for (t_target, fee) in configs {
@@ -705,7 +922,8 @@ fn fm09_rounding_always_favours_pool() {
                         _ => vtrs(&who) - ED, // near the balance cap
                     };
                     let quote = Launchpad::quote_buy(id, amt);
-                    let res = Launchpad::buy(origin(&who), id, amt, 0).map(|_| ()).map_err(|e| e.error);
+                    let res =
+                        Launchpad::buy(origin(&who), id, amt, 0).map(|_| ()).map_err(|e| e.error);
                     match (quote, res) {
                         (Ok(q), Ok(())) => {
                             let s1 = state(id);
@@ -805,11 +1023,20 @@ fn fm09_one_unit_edges() {
             assert!(tok(id, BOB) > 0);
             buy(BOB, id, UNIT);
             assert_noop!(Launchpad::sell(origin(BOB), id, 1, 0), Error::<Test>::Unquotable);
-            assert_noop!(Launchpad::buy(origin(BOB), id, MAX_TRADE_IN + 1, 0), Error::<Test>::ArithmeticOverflow);
-            assert_noop!(Launchpad::buy(origin(BOB), id, u128::MAX, 0), Error::<Test>::ArithmeticOverflow);
+            assert_noop!(
+                Launchpad::buy(origin(BOB), id, MAX_TRADE_IN + 1, 0),
+                Error::<Test>::ArithmeticOverflow
+            );
+            assert_noop!(
+                Launchpad::buy(origin(BOB), id, u128::MAX, 0),
+                Error::<Test>::ArithmeticOverflow
+            );
             assert_noop!(Launchpad::buy(origin(BOB), id, 0, 0), Error::<Test>::ZeroAmount);
             assert_noop!(Launchpad::sell(origin(BOB), id, 0, 0), Error::<Test>::ZeroAmount);
-            assert_noop!(Launchpad::sell(origin(BOB), id, tok(id, BOB) + 1, 0), Error::<Test>::SellExceedsSold);
+            assert_noop!(
+                Launchpad::sell(origin(BOB), id, tok(id, BOB) + 1, 0),
+                Error::<Test>::SellExceedsSold
+            );
         }
     });
 }
@@ -864,10 +1091,28 @@ fn fm10_params_change_does_not_touch_live_launch() {
         assert_eq!(launch(m).params_hash, hash_after);
 
         assert_noop!(
-            Launchpad::create_launch(origin(ALICE), bv(b"N"), bv(b"N"), None, 0, 0, Some(hash_before), None),
+            Launchpad::create_launch(
+                origin(ALICE),
+                bv(b"N"),
+                bv(b"N"),
+                None,
+                0,
+                0,
+                Some(hash_before),
+                None
+            ),
             Error::<Test>::ParamsMismatch
         );
-        assert_ok!(Launchpad::create_launch(origin(ALICE), bv(b"N"), bv(b"N"), None, 0, 0, Some(hash_after), None));
+        assert_ok!(Launchpad::create_launch(
+            origin(ALICE),
+            bv(b"N"),
+            bv(b"N"),
+            None,
+            0,
+            0,
+            Some(hash_after),
+            None
+        ));
     });
 }
 
@@ -877,26 +1122,50 @@ fn fm10_params_bounds() {
         let ok = Params::<Test>::get();
         let try_set = |p: LaunchParams<u128>| Launchpad::set_params(RuntimeOrigin::root(), p);
         let oob = || Error::<Test>::ParamsOutOfBounds;
-        assert_noop!(try_set(LaunchParams { graduation_target: 3 * UNIT - 1, .. ok.clone() }), oob());
+        assert_noop!(
+            try_set(LaunchParams { graduation_target: 3 * UNIT - 1, ..ok.clone() }),
+            oob()
+        );
         assert_ok!(try_set(LaunchParams { graduation_target: 3 * UNIT, ..ok.clone() }));
-        assert_noop!(try_set(LaunchParams { graduation_target: 3_000_000_000 * UNIT + 1, .. ok.clone() }), oob());
+        assert_noop!(
+            try_set(LaunchParams { graduation_target: 3_000_000_000 * UNIT + 1, ..ok.clone() }),
+            oob()
+        );
         assert_ok!(try_set(LaunchParams { graduation_target: 3_000_000_000 * UNIT, ..ok.clone() }));
-        assert_noop!(try_set(LaunchParams { curve_fee_bps: 501, .. ok.clone() }), oob());
+        assert_noop!(try_set(LaunchParams { curve_fee_bps: 501, ..ok.clone() }), oob());
         assert_ok!(try_set(LaunchParams { curve_fee_bps: 500, ..ok.clone() }));
-        assert_noop!(try_set(LaunchParams { protocol_share_bps: 4_999, .. ok.clone() }), oob());
+        assert_noop!(try_set(LaunchParams { protocol_share_bps: 4_999, ..ok.clone() }), oob());
         assert_ok!(try_set(LaunchParams { protocol_share_bps: 5_000, ..ok.clone() }));
-        assert_noop!(try_set(LaunchParams { protocol_share_bps: 10_001, .. ok.clone() }), oob());
+        assert_noop!(try_set(LaunchParams { protocol_share_bps: 10_001, ..ok.clone() }), oob());
         assert_ok!(try_set(LaunchParams { protocol_share_bps: 10_000, ..ok.clone() }));
         // L1: the bound is on protocol + treasury (the non-creator share).
-        assert_ok!(try_set(LaunchParams { protocol_share_bps: 2_500, treasury_share_bps: 2_500, ..ok.clone() }));
-        assert_noop!(try_set(LaunchParams { protocol_share_bps: 2_500, treasury_share_bps: 2_499, ..ok.clone() }), oob());
-        assert_noop!(try_set(LaunchParams { protocol_share_bps: 5_000, treasury_share_bps: 5_001, ..ok.clone() }), oob());
-        assert_noop!(try_set(LaunchParams { pool_fee_tier: 2, .. ok.clone() }), oob());
+        assert_ok!(try_set(LaunchParams {
+            protocol_share_bps: 2_500,
+            treasury_share_bps: 2_500,
+            ..ok.clone()
+        }));
+        assert_noop!(
+            try_set(LaunchParams {
+                protocol_share_bps: 2_500,
+                treasury_share_bps: 2_499,
+                ..ok.clone()
+            }),
+            oob()
+        );
+        assert_noop!(
+            try_set(LaunchParams {
+                protocol_share_bps: 5_000,
+                treasury_share_bps: 5_001,
+                ..ok.clone()
+            }),
+            oob()
+        );
+        assert_noop!(try_set(LaunchParams { pool_fee_tier: 2, ..ok.clone() }), oob());
         // L1: tier 1 cannot carry the three routed slices (D9); launch pools are 3 or 10.
-        assert_noop!(try_set(LaunchParams { pool_fee_tier: 1, .. ok.clone() }), oob());
+        assert_noop!(try_set(LaunchParams { pool_fee_tier: 1, ..ok.clone() }), oob());
         assert_ok!(try_set(LaunchParams { pool_fee_tier: 10, ..ok.clone() }));
         let min_fee = MinCreationFee::get();
-        assert_noop!(try_set(LaunchParams { creation_fee: min_fee - 1, .. ok.clone() }), oob());
+        assert_noop!(try_set(LaunchParams { creation_fee: min_fee - 1, ..ok.clone() }), oob());
         assert_ok!(try_set(LaunchParams { creation_fee: min_fee, ..ok.clone() }));
         assert_noop!(Launchpad::set_params(origin(ALICE), ok.clone()), BadOrigin);
         assert_noop!(Launchpad::set_creation_paused(origin(ALICE), true), BadOrigin);
@@ -916,7 +1185,11 @@ fn fm10_params_bounds() {
 fn fm11_seed_overflow_is_impossible() {
     new_test_ext().execute_with(|| {
         set_params(3_000_000_000 * UNIT, 100, 5_000); // T = MaxGraduationTarget = 3·10^27 base units
-        assert_ok!(Balances::force_set_balance(RuntimeOrigin::root(), ALICE, 10_000_000_000 * UNIT));
+        assert_ok!(Balances::force_set_balance(
+            RuntimeOrigin::root(),
+            ALICE,
+            10_000_000_000 * UNIT
+        ));
         let id = create(ALICE);
         assert_ok!(Launchpad::buy(origin(ALICE), id, 5_000_000_000 * UNIT, 0));
         // pre-D1 the DEX's first deposit (isqrt(3e27 × 2e26)) overflowed u128
@@ -936,8 +1209,14 @@ fn fm11_every_complete_state_has_a_forward_path() {
         buy(BOB, id, 10 * UNIT);
         Pools::<Test>::insert(
             pair(id),
-            PoolInfo { reserve_a: 0, reserve_b: 0, fee_tier: 3, total_fees_collected: 0, routing: pallet_vitreus_dex::FeeRouting::default(),
-                pool_account: pool_account(id) },
+            PoolInfo {
+                reserve_a: 0,
+                reserve_b: 0,
+                fee_tier: 3,
+                total_fees_collected: 0,
+                routing: pallet_vitreus_dex::FeeRouting::default(),
+                pool_account: pool_account(id),
+            },
         );
         TotalLiquidity::<Test>::insert(pair(id), 0u128);
         // liquidity at roughly p_end so the rescue is within tolerance
@@ -970,8 +1249,14 @@ fn fm11_every_complete_state_has_a_forward_path() {
         let id = create(ALICE);
         Pools::<Test>::insert(
             pair(id),
-            PoolInfo { reserve_a: 0, reserve_b: 0, fee_tier: 3, total_fees_collected: 0, routing: pallet_vitreus_dex::FeeRouting::default(),
-                pool_account: pool_account(id) },
+            PoolInfo {
+                reserve_a: 0,
+                reserve_b: 0,
+                fee_tier: 3,
+                total_fees_collected: 0,
+                routing: pallet_vitreus_dex::FeeRouting::default(),
+                pool_account: pool_account(id),
+            },
         );
         TotalLiquidity::<Test>::insert(pair(id), 0u128);
         cross(BOB, id);
@@ -985,7 +1270,10 @@ fn fm11_every_complete_state_has_a_forward_path() {
         arm_seed_failure(id, BOB);
         cross(CHARLIE, id);
         assert_eq!(state(id).phase, Phase::Complete);
-        assert_noop!(Launchpad::graduate(origin(DAVE), id), dex_err(pallet_vitreus_dex::Error::<Test>::ExcessRecipientCannotReceive));
+        assert_noop!(
+            Launchpad::graduate(origin(DAVE), id),
+            dex_err(pallet_vitreus_dex::Error::<Test>::ExcessRecipientCannotReceive)
+        );
         disarm_seed_failure();
         assert_ok!(Launchpad::graduate(origin(DAVE), id));
         assert_eq!(state(id).phase, Phase::Graduated);
@@ -1001,7 +1289,16 @@ fn fm11_create_preflight_rejects_unseedable() {
         assert_ok!(Launchpad::ensure_seedable(1_001, 1_001));
         assert_ok!(Launchpad::ensure_seedable(MinGraduationTarget::get(), RESERVED));
         // and with in-bounds params create_launch can never trip it
-        assert_ok!(Launchpad::create_launch(origin(ALICE), bv(b"N"), bv(b"N"), None, 0, 0, None, None));
+        assert_ok!(Launchpad::create_launch(
+            origin(ALICE),
+            bv(b"N"),
+            bv(b"N"),
+            None,
+            0,
+            0,
+            None,
+            None
+        ));
     });
 }
 
@@ -1031,8 +1328,14 @@ fn fm12_wash_trading_is_net_negative() {
                 if claimed > 0 {
                     assert_ok!(Launchpad::claim_creator_fees(origin(ALICE), id));
                 }
-                assert!(claimed < fees_paid, "share={share} fee={fee}: claimed {claimed} ≥ paid {fees_paid}");
-                assert!(vtrs(ALICE) < start, "share={share} fee={fee}: wash trading was profitable");
+                assert!(
+                    claimed < fees_paid,
+                    "share={share} fee={fee}: claimed {claimed} ≥ paid {fees_paid}"
+                );
+                assert!(
+                    vtrs(ALICE) < start,
+                    "share={share} fee={fee}: wash trading was profitable"
+                );
             }
         }
     });
@@ -1052,9 +1355,18 @@ fn fm13_dump_model_exposes_concentration() {
         let held = tok(id, CHARLIE);
         // constant-product prediction with the pool's 0.3 % fee
         let after_fee = held - held * 3 / 1_000;
-        let predicted = u128::try_from(U256::from(rq) * U256::from(after_fee) / U256::from(rt + after_fee)).unwrap();
+        let predicted =
+            u128::try_from(U256::from(rq) * U256::from(after_fee) / U256::from(rt + after_fee))
+                .unwrap();
         let before = vtrs(CHARLIE);
-        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(origin(CHARLIE), kind(id), native(), held, 0, CHARLIE));
+        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
+            origin(CHARLIE),
+            kind(id),
+            native(),
+            held,
+            0,
+            CHARLIE
+        ));
         assert_eq!(vtrs(CHARLIE) - before, predicted);
         // The number the frontend's concentration warning must reproduce:
         // a 30 % holder's dump takes more than half the pool's quote.
@@ -1083,7 +1395,16 @@ fn fm14_asset_id_squatting() {
     new_test_ext().execute_with(|| {
         let next = NextLaunchId::<Test>::get();
         assert_ok!(Assets::create(origin(BOB), asset_of(next + 1).into(), BOB, 1));
-        assert_ok!(Launchpad::create_launch(origin(ALICE), bv(b"N"), bv(b"N"), None, 0, 0, None, None));
+        assert_ok!(Launchpad::create_launch(
+            origin(ALICE),
+            bv(b"N"),
+            bv(b"N"),
+            None,
+            0,
+            0,
+            None,
+            None
+        ));
         assert_noop!(
             Launchpad::create_launch(origin(ALICE), bv(b"N"), bv(b"N"), None, 0, 0, None, None),
             Error::<Test>::AssetIdTaken
@@ -1148,8 +1469,26 @@ fn fm15_escrow_survives_full_sellback_and_claims() {
 #[test]
 fn fm16_name_symbol_not_enforced_on_chain() {
     new_test_ext().execute_with(|| {
-        assert_ok!(Launchpad::create_launch(origin(ALICE), bv(b"Same"), bv(b"SAME"), None, 0, 0, None, None));
-        assert_ok!(Launchpad::create_launch(origin(BOB), bv(b"Same"), bv(b"SAME"), None, 0, 0, None, None));
+        assert_ok!(Launchpad::create_launch(
+            origin(ALICE),
+            bv(b"Same"),
+            bv(b"SAME"),
+            None,
+            0,
+            0,
+            None,
+            None
+        ));
+        assert_ok!(Launchpad::create_launch(
+            origin(BOB),
+            bv(b"Same"),
+            bv(b"SAME"),
+            None,
+            0,
+            0,
+            None,
+            None
+        ));
         assert_noop!(
             Launchpad::create_launch(origin(BOB), bv(b""), bv(b"X"), None, 0, 0, None, None),
             Error::<Test>::InvalidMetadata
@@ -1166,10 +1505,19 @@ fn creator_fee_recipient_is_self_managed() {
     new_test_ext().execute_with(|| {
         let id = create(ALICE);
         buy(BOB, id, 100 * UNIT);
-        assert_noop!(Launchpad::set_creator_fee_recipient(origin(BOB), id, BOB), Error::<Test>::NotFeeRecipient);
-        assert_noop!(Launchpad::set_creator_fee_recipient(RuntimeOrigin::root(), id, BOB), BadOrigin);
+        assert_noop!(
+            Launchpad::set_creator_fee_recipient(origin(BOB), id, BOB),
+            Error::<Test>::NotFeeRecipient
+        );
+        assert_noop!(
+            Launchpad::set_creator_fee_recipient(RuntimeOrigin::root(), id, BOB),
+            BadOrigin
+        );
         assert_ok!(Launchpad::set_creator_fee_recipient(origin(ALICE), id, CHARLIE));
-        assert_noop!(Launchpad::claim_creator_fees(origin(ALICE), id), Error::<Test>::NotFeeRecipient);
+        assert_noop!(
+            Launchpad::claim_creator_fees(origin(ALICE), id),
+            Error::<Test>::NotFeeRecipient
+        );
         let unclaimed = state(id).creator_fees_unclaimed;
         let before = vtrs(CHARLIE);
         assert_ok!(Launchpad::claim_creator_fees(origin(CHARLIE), id));
@@ -1190,7 +1538,8 @@ fn weights_crossing_buy_refunds_when_not_crossing() {
         let id = create(ALICE);
 
         // Pre-dispatch, `buy` is always charged the crossing path.
-        let call: RuntimeCall = crate::Call::<Test>::buy { launch_id: id, quote_in: 1, min_tokens_out: 0 }.into();
+        let call: RuntimeCall =
+            crate::Call::<Test>::buy { launch_id: id, quote_in: 1, min_tokens_out: 0 }.into();
         assert_eq!(call.get_dispatch_info().weight, <() as W>::buy_crossing());
         assert!(<() as W>::buy_crossing().all_gt(<() as W>::buy()));
 
@@ -1206,20 +1555,58 @@ fn weights_crossing_buy_refunds_when_not_crossing() {
 
         // `create_launch` with a non-crossing initial buy: charged create + crossing, refunded to create + buy.
         let call: RuntimeCall = crate::Call::<Test>::create_launch {
-            name: bv(b"Meme"), symbol: bv(b"MEME"), creator_fee_recipient: None,
-            initial_buy: 2_000 * UNIT, min_tokens_out: 0, expected_params_hash: None, metadata: None,
-        }.into();
-        assert_eq!(call.get_dispatch_info().weight, <() as W>::create_launch(4, 4, 0, 0).saturating_add(<() as W>::buy_crossing()));
-        let post = Launchpad::create_launch(origin(CHARLIE), bv(b"Meme"), bv(b"MEME"), None, 2_000 * UNIT, 0, None, None).unwrap();
-        assert_eq!(post.actual_weight, Some(<() as W>::create_launch(4, 4, 0, 0).saturating_add(<() as W>::buy())));
+            name: bv(b"Meme"),
+            symbol: bv(b"MEME"),
+            creator_fee_recipient: None,
+            initial_buy: 2_000 * UNIT,
+            min_tokens_out: 0,
+            expected_params_hash: None,
+            metadata: None,
+        }
+        .into();
+        assert_eq!(
+            call.get_dispatch_info().weight,
+            <() as W>::create_launch(4, 4, 0, 0).saturating_add(<() as W>::buy_crossing())
+        );
+        let post = Launchpad::create_launch(
+            origin(CHARLIE),
+            bv(b"Meme"),
+            bv(b"MEME"),
+            None,
+            2_000 * UNIT,
+            0,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            post.actual_weight,
+            Some(<() as W>::create_launch(4, 4, 0, 0).saturating_add(<() as W>::buy()))
+        );
 
         // Without an initial buy nothing extra is charged and nothing is refunded.
         let call: RuntimeCall = crate::Call::<Test>::create_launch {
-            name: bv(b"Meme"), symbol: bv(b"MEME"), creator_fee_recipient: None,
-            initial_buy: 0, min_tokens_out: 0, expected_params_hash: None, metadata: None,
-        }.into();
+            name: bv(b"Meme"),
+            symbol: bv(b"MEME"),
+            creator_fee_recipient: None,
+            initial_buy: 0,
+            min_tokens_out: 0,
+            expected_params_hash: None,
+            metadata: None,
+        }
+        .into();
         assert_eq!(call.get_dispatch_info().weight, <() as W>::create_launch(4, 4, 0, 0));
-        let post = Launchpad::create_launch(origin(CHARLIE), bv(b"Meme"), bv(b"MEME"), None, 0, 0, None, None).unwrap();
+        let post = Launchpad::create_launch(
+            origin(CHARLIE),
+            bv(b"Meme"),
+            bv(b"MEME"),
+            None,
+            0,
+            0,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(post.actual_weight, None);
     });
 }
@@ -1250,7 +1637,14 @@ fn d4_graduated_pool_routes_fees_and_the_launch_recipient_claims_them() {
         // A DEX swap on the graduated pool routes 5 + 5 bps of the VTRS leg.
         let amount_in = 10 * UNIT;
         let slice = amount_in * 5 / 10_000;
-        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(origin(BOB), native(), kind(id), amount_in, 0, BOB.clone()));
+        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
+            origin(BOB),
+            native(),
+            kind(id),
+            amount_in,
+            0,
+            BOB.clone()
+        ));
         assert_eq!(CreatorFeesUnclaimed::<Test>::get(pair(id)), slice);
         assert_eq!(ProtocolFeesUnclaimed::<Test>::get(), slice);
         assert_eq!(vtrs(VitreusDex::fee_escrow_account()), 2 * slice);
@@ -1268,7 +1662,14 @@ fn d4_graduated_pool_routes_fees_and_the_launch_recipient_claims_them() {
         // Handing the launch's fee stream to DAVE moves the DEX claim right
         // with it — no propagation, the DEX asks the launchpad at claim time.
         assert_ok!(Launchpad::set_creator_fee_recipient(origin(ALICE), id, DAVE));
-        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(origin(BOB), native(), kind(id), amount_in, 0, BOB.clone()));
+        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
+            origin(BOB),
+            native(),
+            kind(id),
+            amount_in,
+            0,
+            BOB.clone()
+        ));
         assert_noop!(
             VitreusDex::claim_pool_creator_fees(origin(ALICE), kind(id)),
             dex_err(pallet_vitreus_dex::Error::<Test>::NotCreatorFeeRecipient)
@@ -1327,15 +1728,35 @@ fn metadata_is_optional_and_stored_apart_from_the_launch_record() {
         // Some: stored verbatim, the launch record itself is unchanged in shape.
         let b = NextLaunchId::<Test>::get();
         let m = meta(b"ipfs://Qm/logo.png", b"A meme.");
-        assert_ok!(Launchpad::create_launch(origin(ALICE), bv(b"Meme"), bv(b"MEME"), None, 0, 0, None, Some(m.clone())));
+        assert_ok!(Launchpad::create_launch(
+            origin(ALICE),
+            bv(b"Meme"),
+            bv(b"MEME"),
+            None,
+            0,
+            0,
+            None,
+            Some(m.clone())
+        ));
         assert_eq!(crate::Metadata::<Test>::get(b), Some(m));
-        assert!(has_event(|e| matches!(e, Event::LaunchMetadataSet { launch_id } if *launch_id == b)));
+        assert!(has_event(
+            |e| matches!(e, Event::LaunchMetadataSet { launch_id } if *launch_id == b)
+        ));
         assert_eq!(launch(b).creator, ALICE);
 
         // Nothing is validated: bytes that are not a URI or a handle are accepted as given.
         let c = NextLaunchId::<Test>::get();
         let junk = meta(b"not a uri \x00\xff", b"<script>alert(1)</script>");
-        assert_ok!(Launchpad::create_launch(origin(BOB), bv(b"J"), bv(b"J"), None, 0, 0, None, Some(junk.clone())));
+        assert_ok!(Launchpad::create_launch(
+            origin(BOB),
+            bv(b"J"),
+            bv(b"J"),
+            None,
+            0,
+            0,
+            None,
+            Some(junk.clone())
+        ));
         assert_eq!(crate::Metadata::<Test>::get(c), Some(junk));
     });
 }
@@ -1347,9 +1768,18 @@ fn set_launch_metadata_follows_the_creator_fee_recipient() {
         let m1 = meta(b"https://a/1.png", b"one");
         let m2 = meta(b"https://a/2.png", b"two");
 
-        assert_noop!(Launchpad::set_launch_metadata(origin(BOB), id, m1.clone()), Error::<Test>::NotFeeRecipient);
-        assert_noop!(Launchpad::set_launch_metadata(RuntimeOrigin::root(), id, m1.clone()), BadOrigin);
-        assert_noop!(Launchpad::set_launch_metadata(origin(ALICE), 999, m1.clone()), Error::<Test>::LaunchNotFound);
+        assert_noop!(
+            Launchpad::set_launch_metadata(origin(BOB), id, m1.clone()),
+            Error::<Test>::NotFeeRecipient
+        );
+        assert_noop!(
+            Launchpad::set_launch_metadata(RuntimeOrigin::root(), id, m1.clone()),
+            BadOrigin
+        );
+        assert_noop!(
+            Launchpad::set_launch_metadata(origin(ALICE), 999, m1.clone()),
+            Error::<Test>::LaunchNotFound
+        );
 
         // The creator sets it when none was given at creation, and replaces it whole.
         assert_ok!(Launchpad::set_launch_metadata(origin(ALICE), id, m1.clone()));
@@ -1359,7 +1789,10 @@ fn set_launch_metadata_follows_the_creator_fee_recipient() {
 
         // Handing the fee stream to CHARLIE hands metadata authority with it.
         assert_ok!(Launchpad::set_creator_fee_recipient(origin(ALICE), id, CHARLIE));
-        assert_noop!(Launchpad::set_launch_metadata(origin(ALICE), id, m1.clone()), Error::<Test>::NotFeeRecipient);
+        assert_noop!(
+            Launchpad::set_launch_metadata(origin(ALICE), id, m1.clone()),
+            Error::<Test>::NotFeeRecipient
+        );
         assert_ok!(Launchpad::set_launch_metadata(origin(CHARLIE), id, m1.clone()));
         assert_eq!(crate::Metadata::<Test>::get(id), Some(m1.clone()));
 
@@ -1404,7 +1837,14 @@ use crate::mock::{SINK_NOTED, SINK_VAULT, VAULT};
 fn set_params3(share: u16, treasury_share: u16) {
     assert_ok!(Launchpad::set_params(
         RuntimeOrigin::root(),
-        LaunchParams { graduation_target: T_DEFAULT, curve_fee_bps: 100, protocol_share_bps: share, treasury_share_bps: treasury_share, pool_fee_tier: 3, creation_fee: CREATION_FEE }
+        LaunchParams {
+            graduation_target: T_DEFAULT,
+            curve_fee_bps: 100,
+            protocol_share_bps: share,
+            treasury_share_bps: treasury_share,
+            pool_fee_tier: 3,
+            creation_fee: CREATION_FEE
+        }
     ));
 }
 
@@ -1470,7 +1910,11 @@ fn l1_no_sink_folds_treasury_share_into_protocol() {
         buy(BOB, id, q);
         let fee = q * 100 / 10_000;
         let s = state(id);
-        assert_eq!(vtrs(TREASURY) - t0, fee / 2, "protocol + treasury, both to the protocol recipient");
+        assert_eq!(
+            vtrs(TREASURY) - t0,
+            fee / 2,
+            "protocol + treasury, both to the protocol recipient"
+        );
         assert_eq!(s.protocol_fees_paid, fee / 2);
         assert_eq!(s.treasury_fees_paid, 0);
         assert_eq!(vtrs(VAULT), ED);
@@ -1488,29 +1932,52 @@ fn l2_buy_for_runs_the_hook_and_can_graduate() {
         assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::launch_of_asset(asset), Some(id));
         assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::asset_of(id), Some(asset));
         assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::phase(id), Some(Phase::Trading));
-        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::last_trade_block(id), Some(1), "created_at until the first trade");
+        assert_eq!(
+            <Venue as CurveVenue<Acc, u128, u128, u64>>::last_trade_block(id),
+            Some(1),
+            "created_at until the first trade"
+        );
         let t = terms(id);
-        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::virtual_reserves(id), Some((t.virtual_quote, t.token_floor + SELLABLE)));
+        assert_eq!(
+            <Venue as CurveVenue<Acc, u128, u128, u64>>::virtual_reserves(id),
+            Some((t.virtual_quote, t.token_floor + SELLABLE))
+        );
 
         // An in-runtime buy is an ordinary buy for the curve — the hook saw
         // it, the buyer got the tokens — but not for the dormancy clock: it
         // is the treasury buying the token back, not a person trading it (R2).
         System::set_block_number(3);
         let before = HOOK_CALLS.with(|c| c.borrow().len());
-        let got = <Venue as CurveVenue<Acc, u128, u128, u64>>::buy_for(&BOB, id, 10 * UNIT, 0).unwrap();
+        let got =
+            <Venue as CurveVenue<Acc, u128, u128, u64>>::buy_for(&BOB, id, 10 * UNIT, 0).unwrap();
         assert_eq!(tok(id, BOB), got);
         assert!(got > 0);
         assert_eq!(HOOK_CALLS.with(|c| c.borrow().len()), before + 1);
-        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::last_trade_block(id), Some(1), "buy_for does not move the clock");
+        assert_eq!(
+            <Venue as CurveVenue<Acc, u128, u128, u64>>::last_trade_block(id),
+            Some(1),
+            "buy_for does not move the clock"
+        );
         assert_ok!(Launchpad::buy(RuntimeOrigin::signed(BOB), id, UNIT, 0));
-        assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::last_trade_block(id), Some(3), "a person's buy does");
+        assert_eq!(
+            <Venue as CurveVenue<Acc, u128, u128, u64>>::last_trade_block(id),
+            Some(3),
+            "a person's buy does"
+        );
         // Slippage binds like the extrinsic's.
         assert_noop!(
-            <Venue as CurveVenue<Acc, u128, u128, u64>>::buy_for(&BOB, id, 10 * UNIT, u128::MAX / 4),
+            <Venue as CurveVenue<Acc, u128, u128, u64>>::buy_for(
+                &BOB,
+                id,
+                10 * UNIT,
+                u128::MAX / 4
+            ),
             Error::<Test>::SlippageExceeded
         );
         // A big enough buy crosses and graduates (§2.4.3: a retirement can seed a dead curve).
-        let got = <Venue as CurveVenue<Acc, u128, u128, u64>>::buy_for(&BOB, id, 500_000_000 * UNIT, 0).unwrap();
+        let got =
+            <Venue as CurveVenue<Acc, u128, u128, u64>>::buy_for(&BOB, id, 500_000_000 * UNIT, 0)
+                .unwrap();
         assert!(got > 0);
         assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::phase(id), Some(Phase::Graduated));
         assert_eq!(<Venue as CurveVenue<Acc, u128, u128, u64>>::virtual_reserves(id), None);

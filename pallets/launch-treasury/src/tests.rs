@@ -38,7 +38,16 @@ fn treasury(id: LaunchId) -> TreasuryRecord<u128, u64> {
 }
 fn create(creator: impl Borrow<Acc>) -> LaunchId {
     let id = pallet_launchpad::NextLaunchId::<Test>::get();
-    assert_ok!(Launchpad::create_launch(origin(creator), bv(b"Meme"), bv(b"MEME"), None, 0, 0, None, None));
+    assert_ok!(Launchpad::create_launch(
+        origin(creator),
+        bv(b"Meme"),
+        bv(b"MEME"),
+        None,
+        0,
+        0,
+        None,
+        None
+    ));
     id
 }
 fn buy(who: impl Borrow<Acc>, id: LaunchId, q: u128) {
@@ -51,7 +60,14 @@ fn cross(who: impl Borrow<Acc>, id: LaunchId) {
 }
 fn pool_buy(who: impl Borrow<Acc>, id: LaunchId, vtrs_in: u128) {
     let who = who.borrow().clone();
-    assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(origin(&who), NativeOrAssetId::Native, kind(id), vtrs_in, 0, who));
+    assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
+        origin(&who),
+        NativeOrAssetId::Native,
+        kind(id),
+        vtrs_in,
+        0,
+        who
+    ));
 }
 fn run_to(block: u64) {
     System::set_block_number(block);
@@ -112,7 +128,9 @@ fn last_event() -> Event<Test> {
         .expect("a treasury event")
 }
 fn has_event(f: impl Fn(&Event<Test>) -> bool) -> bool {
-    System::events().iter().any(|r| matches!(&r.event, RuntimeEvent::LaunchTreasury(e) if f(e)))
+    System::events()
+        .iter()
+        .any(|r| matches!(&r.event, RuntimeEvent::LaunchTreasury(e) if f(e)))
 }
 
 // ---- lifecycle -----------------------------------------------------------
@@ -199,8 +217,13 @@ fn t_l2_harvest_attributes_by_shares_not_by_time() {
         assert_ok!(LaunchTreasury::harvest(origin(KEEPER)));
         assert_eq!(LnrgAccounted::<Test>::get(), 400 * UNIT);
         let total = sa + sb;
-        let share_of = |amount: u128, s: u128, t: u128| -> u128 { (U256::from(amount) * U256::from(s) / U256::from(t)).try_into().unwrap() };
-        let (ca, cb) = (LaunchTreasury::claimable_lnrg(a).unwrap(), LaunchTreasury::claimable_lnrg(b).unwrap());
+        let share_of = |amount: u128, s: u128, t: u128| -> u128 {
+            (U256::from(amount) * U256::from(s) / U256::from(t)).try_into().unwrap()
+        };
+        let (ca, cb) = (
+            LaunchTreasury::claimable_lnrg(a).unwrap(),
+            LaunchTreasury::claimable_lnrg(b).unwrap(),
+        );
         // By shares, to within the accumulator's rounding (1e18-scaled, so a few units at most).
         assert!(ca.abs_diff(share_of(400 * UNIT, sa, total)) <= 100);
         assert!(cb.abs_diff(share_of(400 * UNIT, sb, total)) <= 100);
@@ -228,7 +251,11 @@ fn t_l2_harvest_attributes_by_shares_not_by_time() {
         }
         assert!(treasury(a).pending >= UNIT);
         assert_ok!(stake(a));
-        assert_eq!(LaunchTreasury::claimable_lnrg(a), Some(ca2), "re-staking neither loses nor mints yield");
+        assert_eq!(
+            LaunchTreasury::claimable_lnrg(a),
+            Some(ca2),
+            "re-staking neither loses nor mints yield"
+        );
         assert_eq!(treasury(a).lnrg_accrued, ca2, "realised into the record at the checkpoint");
         ok_state();
     });
@@ -242,12 +269,24 @@ fn t_l3_compound_burns_everything_it_buys() {
         pay_rewards(50 * UNIT);
         let supply_before = Assets::total_supply(asset(a));
         let (vault_lnrg, keeper_vtrs) = (lnrg(vault()), vtrs(KEEPER));
-        let (r_native, _) = <VitreusDex as PoolManager<Acc, NativeOrAssetId, u128, u64>>::native_reserves(kind(a)).unwrap();
+        let (r_native, _) =
+            <VitreusDex as PoolManager<Acc, NativeOrAssetId, u128, u64>>::native_reserves(kind(a))
+                .unwrap();
         let cap = r_native * IMPACT_BPS as u128 / (2 * BPS as u128);
 
         run_to(now() + BURN_INTERVAL);
         assert_ok!(compound(a));
-        let Event::Compounded { lnrg_sold, vtrs_realised, bounty, vtrs_burned_in, tokens_burned, .. } = last_event() else { panic!("Compounded") };
+        let Event::Compounded {
+            lnrg_sold,
+            vtrs_realised,
+            bounty,
+            vtrs_burned_in,
+            tokens_burned,
+            ..
+        } = last_event()
+        else {
+            panic!("Compounded")
+        };
         // Sold everything attributed (the broker is deep) — the accumulator
         // floors, so a few base units stay unattributed — at its rate less 1 %.
         assert!(50 * UNIT - lnrg_sold < 100 && lnrg_sold > 0);
@@ -279,7 +318,9 @@ fn t_l3_compound_burns_everything_it_buys() {
         run_to(now() + BURN_INTERVAL);
         let before = treasury(a).pending_burn;
         assert_ok!(compound(a));
-        let Event::Compounded { lnrg_sold, bounty, vtrs_burned_in, .. } = last_event() else { panic!("Compounded") };
+        let Event::Compounded { lnrg_sold, bounty, vtrs_burned_in, .. } = last_event() else {
+            panic!("Compounded")
+        };
         assert_eq!(lnrg_sold, 0);
         assert!(vtrs_burned_in > 0 && treasury(a).pending_burn == before - vtrs_burned_in - bounty);
         assert_eq!(tok(a, vault()), 0);
@@ -310,8 +351,16 @@ fn t_l9_burn_slice_pays_the_keeper() {
         run_to(now() + BURN_INTERVAL);
         let keeper_before = vtrs(KEEPER);
         assert_ok!(compound(a));
-        let Event::Compounded { lnrg_sold, vtrs_realised, bounty, vtrs_burned_in, .. } = last_event() else { panic!("Compounded, got {:?}", last_event()) };
-        assert_eq!((lnrg_sold, vtrs_realised), (0, 0), "nothing to sell: the bounty is the slice's");
+        let Event::Compounded { lnrg_sold, vtrs_realised, bounty, vtrs_burned_in, .. } =
+            last_event()
+        else {
+            panic!("Compounded, got {:?}", last_event())
+        };
+        assert_eq!(
+            (lnrg_sold, vtrs_realised),
+            (0, 0),
+            "nothing to sell: the bounty is the slice's"
+        );
         assert!(vtrs_burned_in > 0 && vtrs_burned_in < principal, "one slice of several");
         assert_eq!(bounty, vtrs_burned_in * BOUNTY_BPS as u128 / BPS as u128);
         assert!(bounty >= ED, "the slice is large enough to pay");
@@ -331,7 +380,10 @@ fn t_l9_burn_slice_pays_the_keeper() {
         assert!(slices > 2, "several slices");
         let paid = vtrs(KEEPER) - keeper_before;
         assert!(paid > bounty, "more than one slice paid");
-        assert!(paid <= principal * BOUNTY_BPS as u128 / BPS as u128, "never above the rate on the principal");
+        assert!(
+            paid <= principal * BOUNTY_BPS as u128 / BPS as u128,
+            "never above the rate on the principal"
+        );
         ok_state();
     });
 }
@@ -367,11 +419,18 @@ fn t_l4_retire_requires_dormancy_and_is_one_way() {
         // One-way: no stake, no second retire, and the pool's slice now folds into the protocol.
         assert_noop!(retire(a), Error::<Test>::NotActive);
         assert_noop!(stake(a), Error::<Test>::NotActive);
-        assert_eq!(<LaunchTreasury as TreasurySink<NativeOrAssetId, Acc, u128>>::account_for(&kind(a)), None);
+        assert_eq!(
+            <LaunchTreasury as TreasurySink<NativeOrAssetId, Acc, u128>>::account_for(&kind(a)),
+            None
+        );
         let (proto_before, vault_before) = (ProtocolFeesUnclaimed::<Test>::get(), vtrs(vault()));
         pool_buy(CHARLIE, a, 100 * UNIT);
         assert_eq!(vtrs(vault()), vault_before);
-        assert_eq!(ProtocolFeesUnclaimed::<Test>::get() - proto_before, 100 * UNIT * 15 / 10_000, "protocol 5 + treasury 10");
+        assert_eq!(
+            ProtocolFeesUnclaimed::<Test>::get() - proto_before,
+            100 * UNIT * 15 / 10_000,
+            "protocol 5 + treasury 10"
+        );
         assert_eq!(treasury(a).pending, 0);
         ok_state();
     });
@@ -405,8 +464,15 @@ fn t_l5_finalize_credits_every_matured_launch_exactly() {
         assert_ok!(finalize(a));
         let ta = treasury(a);
         assert_eq!(ta.status, TreasuryStatus::Retired);
-        assert_eq!(ta.pending_burn, va - va * 1_000 / 10_000, "credited what came back, not what was unbonded");
-        assert_eq!(treasury(b).status, TreasuryStatus::Retiring { chunk_era: 12 + BONDING_DURATION });
+        assert_eq!(
+            ta.pending_burn,
+            va - va * 1_000 / 10_000,
+            "credited what came back, not what was unbonded"
+        );
+        assert_eq!(
+            treasury(b).status,
+            TreasuryStatus::Retiring { chunk_era: 12 + BONDING_DURATION }
+        );
         assert_eq!(RetiringQueue::<Test>::get().len(), 1);
         ok_state();
 
@@ -503,11 +569,26 @@ fn t_l6_snapshotted_terms_survive_set_terms() {
             f(&mut t);
             t
         };
-        assert_noop!(LaunchTreasury::set_terms(RuntimeOrigin::root(), bad(|t| t.max_burn_impact_bps = 9)), Error::<Test>::TermsOutOfBounds);
-        assert_noop!(LaunchTreasury::set_terms(RuntimeOrigin::root(), bad(|t| t.max_burn_impact_bps = 501)), Error::<Test>::TermsOutOfBounds);
-        assert_noop!(LaunchTreasury::set_terms(RuntimeOrigin::root(), bad(|t| t.keeper_bounty_bps = 201)), Error::<Test>::TermsOutOfBounds);
-        assert_noop!(LaunchTreasury::set_terms(RuntimeOrigin::root(), bad(|t| t.dormancy_blocks = 0)), Error::<Test>::TermsOutOfBounds);
-        assert_noop!(LaunchTreasury::set_terms(RuntimeOrigin::root(), bad(|t| t.min_stake = 0)), Error::<Test>::TermsOutOfBounds);
+        assert_noop!(
+            LaunchTreasury::set_terms(RuntimeOrigin::root(), bad(|t| t.max_burn_impact_bps = 9)),
+            Error::<Test>::TermsOutOfBounds
+        );
+        assert_noop!(
+            LaunchTreasury::set_terms(RuntimeOrigin::root(), bad(|t| t.max_burn_impact_bps = 501)),
+            Error::<Test>::TermsOutOfBounds
+        );
+        assert_noop!(
+            LaunchTreasury::set_terms(RuntimeOrigin::root(), bad(|t| t.keeper_bounty_bps = 201)),
+            Error::<Test>::TermsOutOfBounds
+        );
+        assert_noop!(
+            LaunchTreasury::set_terms(RuntimeOrigin::root(), bad(|t| t.dormancy_blocks = 0)),
+            Error::<Test>::TermsOutOfBounds
+        );
+        assert_noop!(
+            LaunchTreasury::set_terms(RuntimeOrigin::root(), bad(|t| t.min_stake = 0)),
+            Error::<Test>::TermsOutOfBounds
+        );
         assert_noop!(LaunchTreasury::set_terms(origin(ALICE), terms), BadOrigin);
     });
 }
@@ -584,14 +665,24 @@ fn fm_t1_slice_never_exceeds_impact_cap() {
         pay_rewards(5_000 * UNIT);
         for _ in 0..8 {
             run_to(now() + BURN_INTERVAL);
-            let (rn, rt) = <VitreusDex as PoolManager<Acc, NativeOrAssetId, u128, u64>>::native_reserves(kind(a)).unwrap();
+            let (rn, rt) =
+                <VitreusDex as PoolManager<Acc, NativeOrAssetId, u128, u64>>::native_reserves(
+                    kind(a),
+                )
+                .unwrap();
             let cap = rn * IMPACT_BPS as u128 / (2 * BPS as u128);
             assert_ok!(compound(a));
-            let Event::Compounded { vtrs_burned_in, .. } = last_event() else { panic!("Compounded") };
+            let Event::Compounded { vtrs_burned_in, .. } = last_event() else {
+                panic!("Compounded")
+            };
             assert!(vtrs_burned_in <= cap, "{vtrs_burned_in} > cap {cap}");
             assert!(vtrs_burned_in > 0);
             // The price moved by at most the cap's impact (plus the fee's rounding).
-            let (rn2, rt2) = <VitreusDex as PoolManager<Acc, NativeOrAssetId, u128, u64>>::native_reserves(kind(a)).unwrap();
+            let (rn2, rt2) =
+                <VitreusDex as PoolManager<Acc, NativeOrAssetId, u128, u64>>::native_reserves(
+                    kind(a),
+                )
+                .unwrap();
             let p_before = U256::from(rn) * U256::from(SCALE) / U256::from(rt);
             let p_after = U256::from(rn2) * U256::from(SCALE) / U256::from(rt2);
             let moved_bps = (p_after - p_before) * U256::from(BPS) / p_before;
@@ -616,7 +707,10 @@ fn fm_t2_stake_before_reputation_keeps_bond_and_retries() {
         // The mock's errors are `DispatchError::Other`, whose text does not
         // survive the event encoding (a module error's index does); the
         // direct return below carries the name.
-        assert!(has_event(|e| matches!(e, Event::CooperationStale { reason: DispatchError::Other(_) })));
+        assert!(has_event(|e| matches!(
+            e,
+            Event::CooperationStale { reason: DispatchError::Other(_) }
+        )));
         assert_eq!(treasury(a).shares, p);
         ok_state();
         // Anyone may retry; it fails for the same reason until the record clears.
@@ -675,7 +769,9 @@ fn fm_t4_dry_broker_keeps_lnrg_accrued() {
         // Half the depth: sells what fits, keeps the rest.
         fund_broker(30 * UNIT);
         assert_ok!(compound(a));
-        let Event::Compounded { lnrg_sold, vtrs_realised, .. } = last_event() else { panic!("Compounded") };
+        let Event::Compounded { lnrg_sold, vtrs_realised, .. } = last_event() else {
+            panic!("Compounded")
+        };
         assert!(vtrs_realised <= 30 * UNIT && vtrs_realised > 29 * UNIT);
         assert!(lnrg_sold < owed);
         let t = treasury(a);
@@ -699,12 +795,17 @@ fn fm_t6_slash_devalues_every_launch_equally() {
         let b = graduated_with_volume(BOB, 4);
         assert_ok!(stake(a));
         assert_ok!(stake(b));
-        let (va, vb) = (LaunchTreasury::staked_value(a).unwrap(), LaunchTreasury::staked_value(b).unwrap());
+        let (va, vb) =
+            (LaunchTreasury::staked_value(a).unwrap(), LaunchTreasury::staked_value(b).unwrap());
         MockStaking::slash(&vault(), 2_000);
-        let (va2, vb2) = (LaunchTreasury::staked_value(a).unwrap(), LaunchTreasury::staked_value(b).unwrap());
+        let (va2, vb2) =
+            (LaunchTreasury::staked_value(a).unwrap(), LaunchTreasury::staked_value(b).unwrap());
         assert!(va2.abs_diff(va * 8 / 10) <= 1);
         assert!(vb2.abs_diff(vb * 8 / 10) <= 1);
-        assert!(active() - (va2 + vb2) <= 1, "nothing is created or lost by the accounting beyond a floor");
+        assert!(
+            active() - (va2 + vb2) <= 1,
+            "nothing is created or lost by the accounting beyond a floor"
+        );
         assert!(active() - cooperated() <= 2, "targets scaled with the slash, floor per target");
         ok_state();
         // A retires at the post-slash price.
@@ -737,7 +838,10 @@ fn fm_t7_no_more_chunks_is_retryable() {
         MockStaking::set_era(MockStaking::current_era() + BONDING_DURATION - MAX_CHUNKS + 1);
         assert!(MockStaking::withdraw_unbonded(&vault()).unwrap() > 0);
         assert_ok!(retire(b));
-        assert_eq!(treasury(b).status, TreasuryStatus::Retiring { chunk_era: MockStaking::current_era() + BONDING_DURATION });
+        assert_eq!(
+            treasury(b).status,
+            TreasuryStatus::Retiring { chunk_era: MockStaking::current_era() + BONDING_DURATION }
+        );
     });
 }
 
@@ -799,8 +903,14 @@ fn fm_t11_retirement_can_graduate_a_curve() {
         pay_rewards(2 * T_DEFAULT);
         run_to(now() + DORMANCY);
         assert_ok!(retire(a));
-        assert_eq!(treasury(a).status, TreasuryStatus::Retiring { chunk_era: MockStaking::current_era() + BONDING_DURATION });
-        assert!(LaunchTreasury::claimable_lnrg(a).unwrap() > T_DEFAULT, "the yield is the launch's even while it retires");
+        assert_eq!(
+            treasury(a).status,
+            TreasuryStatus::Retiring { chunk_era: MockStaking::current_era() + BONDING_DURATION }
+        );
+        assert!(
+            LaunchTreasury::claimable_lnrg(a).unwrap() > T_DEFAULT,
+            "the yield is the launch's even while it retires"
+        );
         // Slices buy on the curve — ordinary buys — until it crosses.
         let mut n = 0;
         while Curves::<Test>::get(a).unwrap().phase == Phase::Trading && n < 2_000 {
@@ -810,7 +920,10 @@ fn fm_t11_retirement_can_graduate_a_curve() {
             n += 1;
         }
         assert_eq!(Curves::<Test>::get(a).unwrap().phase, Phase::Graduated, "after {n} slices");
-        assert!(Pools::<Test>::contains_key(VitreusDex::canonical_pair(NativeOrAssetId::Native, kind(a))));
+        assert!(Pools::<Test>::contains_key(VitreusDex::canonical_pair(
+            NativeOrAssetId::Native,
+            kind(a)
+        )));
         assert!(Assets::total_supply(asset(a)) < supply, "what was bought was burned");
         ok_state();
         // The rest keeps burning into the pool it just seeded.
@@ -846,7 +959,11 @@ fn i_t7_cooperation_matches_active_after_every_bond_change() {
         assert_ok!(retire(a));
         check();
         assert_eq!(cooperated(), active());
-        assert_eq!(COOPERATE_CALLS.with(|c| c.borrow().len()), 5, "one cooperate per bond change, none otherwise");
+        assert_eq!(
+            COOPERATE_CALLS.with(|c| c.borrow().len()),
+            5,
+            "one cooperate per bond change, none otherwise"
+        );
     });
 }
 
@@ -858,7 +975,16 @@ fn t_g1_no_origin_can_withdraw() {
         // The complete call surface; nothing here takes a recipient.
         assert_eq!(
             LaunchTreasury::call_names(),
-            ["stake", "retarget", "harvest", "compound", "retire", "finalize_retirement", "set_terms", "set_targets"]
+            [
+                "stake",
+                "retarget",
+                "harvest",
+                "compound",
+                "retire",
+                "finalize_retirement",
+                "set_terms",
+                "set_targets"
+            ]
         );
         let a = graduated_with_volume(ALICE, 10);
         assert_ok!(stake(a));
@@ -890,8 +1016,14 @@ fn t_g2_set_targets_recooperates_without_touching_shares() {
         assert_ok!(stake(b));
         let (sa, sb, total) = (treasury(a).shares, treasury(b).shares, TotalShares::<Test>::get());
         assert_ok!(LaunchTreasury::set_targets(RuntimeOrigin::root(), vec![VAL_C]));
-        assert_eq!(COOPERATE_CALLS.with(|c| c.borrow().last().cloned()).unwrap(), vec![(VAL_C, active())]);
-        assert_eq!((treasury(a).shares, treasury(b).shares, TotalShares::<Test>::get()), (sa, sb, total));
+        assert_eq!(
+            COOPERATE_CALLS.with(|c| c.borrow().last().cloned()).unwrap(),
+            vec![(VAL_C, active())]
+        );
+        assert_eq!(
+            (treasury(a).shares, treasury(b).shares, TotalShares::<Test>::get()),
+            (sa, sb, total)
+        );
         assert!(!CooperationStale::<Test>::get());
         // With no bond yet, setting targets is just storage.
         LEDGER.with(|l| l.borrow_mut().clear());
@@ -911,7 +1043,11 @@ fn t_g3_retired_launch_slice_folds_into_protocol() {
         buy(BOB, a, 50 * UNIT);
         run_to(now() + DORMANCY);
         assert_ok!(retire(a));
-        assert_eq!(treasury(a).status, TreasuryStatus::Retired, "nothing was staked: retired at once");
+        assert_eq!(
+            treasury(a).status,
+            TreasuryStatus::Retired,
+            "nothing was staked: retired at once"
+        );
         let (t0, v0) = (vtrs(TREASURY), vtrs(vault()));
         buy(BOB, a, 50 * UNIT);
         let s = Curves::<Test>::get(a).unwrap();
@@ -921,7 +1057,6 @@ fn t_g3_retired_launch_slice_folds_into_protocol() {
         ok_state();
     });
 }
-
 
 #[test]
 fn t_l5b_finalize_prorates_a_slash_across_matured_launches() {
@@ -1086,7 +1221,10 @@ fn r3_a_closed_treasury_is_reopened_by_the_next_fee() {
             "a retired launch's slice folds into the protocol share forever (FM-T9)"
         );
         assert!(closed(a), "retirement is one-way: the closed record stands, nothing reopened");
-        assert_eq!(<LaunchTreasury as TreasurySink<NativeOrAssetId, Acc, u128>>::account_for(&kind(a)), None);
+        assert_eq!(
+            <LaunchTreasury as TreasurySink<NativeOrAssetId, Acc, u128>>::account_for(&kind(a)),
+            None
+        );
     });
 }
 
@@ -1128,7 +1266,10 @@ fn r4_dust_in_pending_burn_bricks_compound_for_an_active_launch() {
         pay_rewards(10 * UNIT);
         run_to(now() + BURN_INTERVAL);
         assert_ok!(compound(a));
-        assert!(treasury(a).lnrg_accrued <= 1, "sold, bar the asset's min balance the vault keeps (R8)");
+        assert!(
+            treasury(a).lnrg_accrued <= 1,
+            "sold, bar the asset's min balance the vault keeps (R8)"
+        );
     });
 }
 
@@ -1145,7 +1286,11 @@ fn r5_one_wei_sent_to_the_vault_fails_try_state_forever() {
         assert_ok!(stake(a));
         ok_state();
         assert_ok!(Balances::transfer_allow_death(origin(CHARLIE), vault(), 1));
-        assert!(LaunchTreasury::do_try_state().is_ok(), "a donation is not an accounting error: {:?}", LaunchTreasury::do_try_state());
+        assert!(
+            LaunchTreasury::do_try_state().is_ok(),
+            "a donation is not an accounting error: {:?}",
+            LaunchTreasury::do_try_state()
+        );
     });
 }
 
@@ -1161,18 +1306,33 @@ fn r7_burn_impact_is_bounded_under_the_venues_round_trip_fee() {
         terms.max_burn_impact_bps = 200;
         assert_ok!(LaunchTreasury::set_terms(RuntimeOrigin::root(), terms.clone()));
         terms.max_burn_impact_bps = 500;
-        assert_noop!(LaunchTreasury::set_terms(RuntimeOrigin::root(), terms), Error::<Test>::TermsOutOfBounds);
+        assert_noop!(
+            LaunchTreasury::set_terms(RuntimeOrigin::root(), terms),
+            Error::<Test>::TermsOutOfBounds
+        );
 
         let a = graduated_with_volume(ALICE, 10);
         assert_ok!(stake(a));
         // Enough VTRS waiting to burn that only the cap limits the slice.
         Treasuries::<Test>::mutate(a, |t| t.as_mut().unwrap().pending_burn = 10_000 * UNIT);
         assert_ok!(Balances::transfer_allow_death(origin(ALICE), vault(), 10_000 * UNIT));
-        let (reserve, _) = <VitreusDex as pallet_vitreus_dex::PoolManager<Acc, NativeOrAssetId, u128, u64>>::native_reserves(kind(a)).unwrap();
+        let (reserve, _) = <VitreusDex as pallet_vitreus_dex::PoolManager<
+            Acc,
+            NativeOrAssetId,
+            u128,
+            u64,
+        >>::native_reserves(kind(a))
+        .unwrap();
         run_to(now() + BURN_INTERVAL);
         assert_ok!(compound(a));
         let Event::Compounded { vtrs_burned_in, .. } = last_event() else { panic!("Compounded") };
-        let fee_bps = <VitreusDex as pallet_vitreus_dex::PoolManager<Acc, NativeOrAssetId, u128, u64>>::fee_bps(kind(a)).unwrap() as u128;
+        let fee_bps = <VitreusDex as pallet_vitreus_dex::PoolManager<
+            Acc,
+            NativeOrAssetId,
+            u128,
+            u64,
+        >>::fee_bps(kind(a))
+        .unwrap() as u128;
         let bound = reserve * (2 * fee_bps - 1) / 20_000;
         let term = reserve * 200 / 20_000;
         assert!(vtrs_burned_in <= bound, "slice {vtrs_burned_in} within the venue bound {bound}");
@@ -1222,15 +1382,34 @@ fn r9_a_swap_of_ones_whole_balance_keeps_the_ed_instead_of_failing() {
         let dave: Acc = sp_runtime::AccountId32::new([4u8; 32]);
         assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave.clone(), 5 * UNIT));
         // Everything above the ED: goes through, the account lives, the tokens arrive.
-        let r = VitreusDex::swap_exact_tokens_for_tokens(origin(&dave), NativeOrAssetId::Native, kind(a), 5 * UNIT - ED, 0, dave.clone());
+        let r = VitreusDex::swap_exact_tokens_for_tokens(
+            origin(&dave),
+            NativeOrAssetId::Native,
+            kind(a),
+            5 * UNIT - ED,
+            0,
+            dave.clone(),
+        );
         assert!(r.is_ok(), "a swap of everything above the ED: {:?}", r);
         assert_eq!(vtrs(&dave), ED, "the ED stays");
         assert!(tok(a, &dave) > 0, "and the tokens arrived");
         // The ED itself: refused up front with the same answer the curve gives,
         // not `CannotCreate` after the account has died.
-        let r = VitreusDex::swap_exact_tokens_for_tokens(origin(&dave), NativeOrAssetId::Native, kind(a), ED, 0, dave.clone());
+        let r = VitreusDex::swap_exact_tokens_for_tokens(
+            origin(&dave),
+            NativeOrAssetId::Native,
+            kind(a),
+            ED,
+            0,
+            dave.clone(),
+        );
         assert!(
-            matches!(r, Err(DispatchError::Token(sp_runtime::TokenError::Frozen | sp_runtime::TokenError::NotExpendable))),
+            matches!(
+                r,
+                Err(DispatchError::Token(
+                    sp_runtime::TokenError::Frozen | sp_runtime::TokenError::NotExpendable
+                ))
+            ),
             "the ED cannot be spent, said up front: {:?}",
             r
         );
@@ -1250,11 +1429,25 @@ fn r11_selling_ones_whole_token_position_goes_through() {
         let a = graduated_with_volume(ALICE, 0);
         let dave: Acc = sp_runtime::AccountId32::new([6u8; 32]);
         assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave.clone(), 20 * UNIT));
-        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(origin(&dave), NativeOrAssetId::Native, kind(a), 10 * UNIT, 0, dave.clone()));
+        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
+            origin(&dave),
+            NativeOrAssetId::Native,
+            kind(a),
+            10 * UNIT,
+            0,
+            dave.clone()
+        ));
         let held = tok(a, &dave);
         assert!(held > 0);
         let before = vtrs(&dave);
-        let r = VitreusDex::swap_exact_tokens_for_tokens(origin(&dave), kind(a), NativeOrAssetId::Native, held, 0, dave.clone());
+        let r = VitreusDex::swap_exact_tokens_for_tokens(
+            origin(&dave),
+            kind(a),
+            NativeOrAssetId::Native,
+            held,
+            0,
+            dave.clone(),
+        );
         assert!(r.is_ok(), "the whole position sells: {:?}", r);
         assert_eq!(tok(a, &dave), 0, "nothing left");
         assert!(vtrs(&dave) > before, "and the VTRS arrived");
@@ -1275,8 +1468,20 @@ fn r10_a_swap_that_would_deliver_nothing_says_so() {
         pool_buy(ALICE, a, 774_000 * UNIT);
         let dave: Acc = sp_runtime::AccountId32::new([5u8; 32]);
         assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave.clone(), UNIT));
-        let r = VitreusDex::swap_exact_tokens_for_tokens(origin(&dave), NativeOrAssetId::Native, kind(a), 1, 0, dave.clone());
-        assert_eq!(r, Err(pallet_vitreus_dex::Error::<Test>::ZeroAmount.into()), "nothing would be delivered: {:?}", r);
+        let r = VitreusDex::swap_exact_tokens_for_tokens(
+            origin(&dave),
+            NativeOrAssetId::Native,
+            kind(a),
+            1,
+            0,
+            dave.clone(),
+        );
+        assert_eq!(
+            r,
+            Err(pallet_vitreus_dex::Error::<Test>::ZeroAmount.into()),
+            "nothing would be delivered: {:?}",
+            r
+        );
         assert_eq!(vtrs(&dave), UNIT, "and nothing moved");
     });
 }

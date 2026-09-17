@@ -39,18 +39,18 @@
 #[cfg(test)]
 mod mock;
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod settlement_integration_tests;
+#[cfg(test)]
+mod tests;
 
-pub mod settlement;
-pub mod weights;
 #[cfg(feature = "runtime-benchmarks")]
 pub mod benchmarking;
+pub mod settlement;
+pub mod weights;
 
-pub use weights::WeightInfo;
 #[cfg(feature = "runtime-benchmarks")]
 pub use benchmarking::BenchmarkHelper;
+pub use weights::WeightInfo;
 
 pub use pallet::*;
 
@@ -116,7 +116,9 @@ pub const MIN_LAUNCH_FEE_TIER: u32 = 3;
 /// against the smallest tier each kind of pool can have, so a default no
 /// pool could honour cannot be stored (that would fail every launchpad
 /// graduation at seed time, D4).
-#[derive(Clone, Copy, Encode, Decode, Default, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+#[derive(
+    Clone, Copy, Encode, Decode, Default, Eq, PartialEq, RuntimeDebug, TypeInfo, MaxEncodedLen,
+)]
 pub struct FeeRouting {
     /// Share of every swap sent to the protocol fee recipient, in bps of the swap.
     pub protocol_bps: u16,
@@ -130,7 +132,9 @@ pub struct FeeRouting {
 impl FeeRouting {
     /// `protocol_bps + creator_bps + treasury_bps`.
     pub fn routed_bps(&self) -> u16 {
-        self.protocol_bps.saturating_add(self.creator_bps).saturating_add(self.treasury_bps)
+        self.protocol_bps
+            .saturating_add(self.creator_bps)
+            .saturating_add(self.treasury_bps)
     }
     /// D9: whether a pool of `fee_tier` can carry this split.
     pub fn is_valid_for(&self, fee_tier: u32) -> bool {
@@ -497,8 +501,13 @@ pub mod pallet {
     /// than in it so the pool record's shape — which every quoter decodes —
     /// does not change for a field only one reader wants.
     #[pallet::storage]
-    pub type LastSwapBlock<T: Config> =
-        StorageMap<_, Blake2_128Concat, (T::AssetKind, T::AssetKind), BlockNumberFor<T>, OptionQuery>;
+    pub type LastSwapBlock<T: Config> = StorageMap<
+        _,
+        Blake2_128Concat,
+        (T::AssetKind, T::AssetKind),
+        BlockNumberFor<T>,
+        OptionQuery,
+    >;
 
     // ---- Settlement: governance-adjustable parameters ----
 
@@ -542,13 +551,8 @@ pub mod pallet {
     /// Index from solver account to solver id, for uniqueness enforcement
     /// and fast lookup at register time.
     #[pallet::storage]
-    pub type SolverAccountToId<T: Config> = StorageMap<
-        _,
-        Blake2_128Concat,
-        T::AccountId,
-        u64,
-        OptionQuery,
-    >;
+    pub type SolverAccountToId<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, u64, OptionQuery>;
 
     /// All solvers by id.
     #[pallet::storage]
@@ -574,13 +578,8 @@ pub mod pallet {
     /// `token_in` the escrow account owes back to each intent owner.
     /// Insert on `submit_intent`, remove on settle / cancel / refund.
     #[pallet::storage]
-    pub type IntentEscrowBalances<T: Config> = StorageMap<
-        _,
-        Blake2_128Concat,
-        u64,
-        (T::AssetKind, T::Balance),
-        OptionQuery,
-    >;
+    pub type IntentEscrowBalances<T: Config> =
+        StorageMap<_, Blake2_128Concat, u64, (T::AssetKind, T::Balance), OptionQuery>;
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -725,7 +724,6 @@ pub mod pallet {
         },
 
         // ---- Solver marketplace events ----
-
         /// A new solver registered and posted a bond.
         SolverRegistered {
             /// Id assigned to the new solver.
@@ -998,12 +996,11 @@ pub mod pallet {
             // Finding 2: sync reserves from actual balances before computing withdrawal.
             Self::sync_reserves(&pair, &mut pool);
 
-            let total_shares =
-                TotalLiquidity::<T>::get(&pair).ok_or(Error::<T>::PoolNotFound)?;
+            let total_shares = TotalLiquidity::<T>::get(&pair).ok_or(Error::<T>::PoolNotFound)?;
             ensure!(!total_shares.is_zero(), Error::<T>::InsufficientLiquidity);
 
-            let mut position = LiquidityPositions::<T>::get(&who, &pair)
-                .ok_or(Error::<T>::InsufficientShares)?;
+            let mut position =
+                LiquidityPositions::<T>::get(&who, &pair).ok_or(Error::<T>::InsufficientShares)?;
             ensure!(position.shares >= shares, Error::<T>::InsufficientShares);
 
             // Finding 10: enforce lock check.
@@ -1019,37 +1016,19 @@ pub mod pallet {
             ensure!(amount_a >= amount_a_min, Error::<T>::SlippageExceeded);
             ensure!(amount_b >= amount_b_min, Error::<T>::SlippageExceeded);
 
-            T::Assets::transfer(
-                pair.0.clone(),
-                &pool.pool_account,
-                &who,
-                amount_a,
-                Expendable,
-            )?;
-            T::Assets::transfer(
-                pair.1.clone(),
-                &pool.pool_account,
-                &who,
-                amount_b,
-                Expendable,
-            )?;
+            T::Assets::transfer(pair.0.clone(), &pool.pool_account, &who, amount_a, Expendable)?;
+            T::Assets::transfer(pair.1.clone(), &pool.pool_account, &who, amount_b, Expendable)?;
 
-            pool.reserve_a = pool
-                .reserve_a
-                .checked_sub(&amount_a)
-                .ok_or(Error::<T>::InsufficientLiquidity)?;
-            pool.reserve_b = pool
-                .reserve_b
-                .checked_sub(&amount_b)
-                .ok_or(Error::<T>::InsufficientLiquidity)?;
+            pool.reserve_a =
+                pool.reserve_a.checked_sub(&amount_a).ok_or(Error::<T>::InsufficientLiquidity)?;
+            pool.reserve_b =
+                pool.reserve_b.checked_sub(&amount_b).ok_or(Error::<T>::InsufficientLiquidity)?;
             Pools::<T>::insert(&pair, pool);
 
-            let new_total =
-                total_shares.checked_sub(&shares).ok_or(Error::<T>::Overflow)?;
+            let new_total = total_shares.checked_sub(&shares).ok_or(Error::<T>::Overflow)?;
             TotalLiquidity::<T>::insert(&pair, new_total);
 
-            position.shares =
-                position.shares.checked_sub(&shares).ok_or(Error::<T>::Overflow)?;
+            position.shares = position.shares.checked_sub(&shares).ok_or(Error::<T>::Overflow)?;
             if position.shares.is_zero() {
                 LiquidityPositions::<T>::remove(&who, &pair);
             } else {
@@ -1079,7 +1058,16 @@ pub mod pallet {
             recipient: T::AccountId,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
-            Self::do_swap(&who, asset_in, asset_out, amount_in, amount_out_min, &recipient, true, Preserve)?;
+            Self::do_swap(
+                &who,
+                asset_in,
+                asset_out,
+                amount_in,
+                amount_out_min,
+                &recipient,
+                true,
+                Preserve,
+            )?;
             Ok(())
         }
 
@@ -1126,14 +1114,8 @@ pub mod pallet {
             let solver_id = NextSolverId::<T>::get();
             let escrow = Self::solver_escrow_account(solver_id);
 
-            T::Assets::transfer(
-                native_asset,
-                &who,
-                &escrow,
-                bond_amount,
-                Preserve,
-            )
-            .map_err(|_| Error::<T>::InsufficientBondFunds)?;
+            T::Assets::transfer(native_asset, &who, &escrow, bond_amount, Preserve)
+                .map_err(|_| Error::<T>::InsufficientBondFunds)?;
 
             let now = frame_system::Pallet::<T>::block_number();
             let info = crate::settlement::SolverInfo {
@@ -1168,29 +1150,19 @@ pub mod pallet {
         pub fn deregister_solver(origin: OriginFor<T>) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let solver_id = SolverAccountToId::<T>::get(&who)
-                .ok_or(Error::<T>::SolverNotRegistered)?;
-            let mut solver = Solvers::<T>::get(solver_id)
-                .ok_or(Error::<T>::SolverNotRegistered)?;
+            let solver_id =
+                SolverAccountToId::<T>::get(&who).ok_or(Error::<T>::SolverNotRegistered)?;
+            let mut solver = Solvers::<T>::get(solver_id).ok_or(Error::<T>::SolverNotRegistered)?;
 
             ensure!(solver.active, Error::<T>::SolverNotActive);
-            ensure!(
-                solver.active_commitments == 0,
-                Error::<T>::ActiveCommitmentsExist,
-            );
+            ensure!(solver.active_commitments == 0, Error::<T>::ActiveCommitmentsExist,);
 
             let escrow = Self::solver_escrow_account(solver_id);
             let native_asset = T::NativeAsset::get();
             let bond = solver.bond;
 
-            T::Assets::transfer(
-                native_asset,
-                &escrow,
-                &who,
-                bond,
-                Expendable,
-            )
-            .map_err(|_| Error::<T>::InsufficientBondFunds)?;
+            T::Assets::transfer(native_asset, &escrow, &who, bond, Expendable)
+                .map_err(|_| Error::<T>::InsufficientBondFunds)?;
 
             solver.active = false;
             solver.bond = Zero::zero();
@@ -1229,14 +1201,8 @@ pub mod pallet {
             ensure!(deadline > now, Error::<T>::InvalidDeadline);
 
             let escrow = Self::intent_escrow_account();
-            T::Assets::transfer(
-                token_in.clone(),
-                &who,
-                &escrow,
-                amount_in,
-                Preserve,
-            )
-            .map_err(|_| Error::<T>::InvalidAmount)?;
+            T::Assets::transfer(token_in.clone(), &who, &escrow, amount_in, Preserve)
+                .map_err(|_| Error::<T>::InvalidAmount)?;
 
             let intent_id = NextIntentId::<T>::get();
 
@@ -1277,8 +1243,7 @@ pub mod pallet {
         pub fn cancel_intent(origin: OriginFor<T>, intent_id: u64) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let mut intent = Intents::<T>::get(intent_id)
-                .ok_or(Error::<T>::IntentNotFound)?;
+            let mut intent = Intents::<T>::get(intent_id).ok_or(Error::<T>::IntentNotFound)?;
 
             ensure!(intent.user == who, Error::<T>::NotIntentOwner);
             ensure!(
@@ -1288,27 +1253,18 @@ pub mod pallet {
 
             // Use the recorded escrow balance (defense in depth — future
             // changes could adjust escrow mid-life).
-            let (escrow_asset, escrow_amount) = IntentEscrowBalances::<T>::get(intent_id)
-                .ok_or(Error::<T>::IntentNotFound)?;
+            let (escrow_asset, escrow_amount) =
+                IntentEscrowBalances::<T>::get(intent_id).ok_or(Error::<T>::IntentNotFound)?;
 
             let escrow = Self::intent_escrow_account();
-            T::Assets::transfer(
-                escrow_asset,
-                &escrow,
-                &who,
-                escrow_amount,
-                Expendable,
-            )
-            .map_err(|_| Error::<T>::InvalidAmount)?;
+            T::Assets::transfer(escrow_asset, &escrow, &who, escrow_amount, Expendable)
+                .map_err(|_| Error::<T>::InvalidAmount)?;
 
             intent.status = crate::settlement::IntentStatus::Cancelled;
             Intents::<T>::insert(intent_id, intent);
             IntentEscrowBalances::<T>::remove(intent_id);
 
-            Self::deposit_event(Event::IntentCancelled {
-                intent_id,
-                user: who,
-            });
+            Self::deposit_event(Event::IntentCancelled { intent_id, user: who });
 
             Ok(())
         }
@@ -1334,24 +1290,19 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let solver_id = SolverAccountToId::<T>::get(&who)
-                .ok_or(Error::<T>::SolverNotRegistered)?;
-            let mut solver = Solvers::<T>::get(solver_id)
-                .ok_or(Error::<T>::SolverNotRegistered)?;
+            let solver_id =
+                SolverAccountToId::<T>::get(&who).ok_or(Error::<T>::SolverNotRegistered)?;
+            let mut solver = Solvers::<T>::get(solver_id).ok_or(Error::<T>::SolverNotRegistered)?;
             ensure!(solver.active, Error::<T>::SolverNotActive);
 
-            let mut intent = Intents::<T>::get(intent_id)
-                .ok_or(Error::<T>::IntentNotFound)?;
+            let mut intent = Intents::<T>::get(intent_id).ok_or(Error::<T>::IntentNotFound)?;
             ensure!(
                 intent.status == crate::settlement::IntentStatus::Open
                     || intent.status == crate::settlement::IntentStatus::Committed,
                 Error::<T>::IntentNotOpen,
             );
 
-            ensure!(
-                committed_amount_out >= intent.min_amount_out,
-                Error::<T>::BelowMinAmountOut,
-            );
+            ensure!(committed_amount_out >= intent.min_amount_out, Error::<T>::BelowMinAmountOut,);
 
             let now = frame_system::Pallet::<T>::block_number();
             let bid_deadline = intent.submitted_at.saturating_add(Self::current_bid_window());
@@ -1375,8 +1326,7 @@ pub mod pallet {
                 if prior.solver_id == solver_id {
                     self_replaced = true;
                 } else if let Some(mut displaced) = Solvers::<T>::get(prior.solver_id) {
-                    displaced.active_commitments =
-                        displaced.active_commitments.saturating_sub(1);
+                    displaced.active_commitments = displaced.active_commitments.saturating_sub(1);
                     Solvers::<T>::insert(prior.solver_id, displaced);
                 }
             }
@@ -1426,21 +1376,14 @@ pub mod pallet {
         pub fn settle_intent(origin: OriginFor<T>, intent_id: u64) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let commitment = FillCommitments::<T>::get(intent_id)
-                .ok_or(Error::<T>::IntentNotCommitted)?;
-            ensure!(
-                commitment.solver_account == who,
-                Error::<T>::NotCommittedSolver,
-            );
+            let commitment =
+                FillCommitments::<T>::get(intent_id).ok_or(Error::<T>::IntentNotCommitted)?;
+            ensure!(commitment.solver_account == who, Error::<T>::NotCommittedSolver,);
 
             let now = frame_system::Pallet::<T>::block_number();
-            ensure!(
-                now <= commitment.settle_by,
-                Error::<T>::SettlementWindowPassed,
-            );
+            ensure!(now <= commitment.settle_by, Error::<T>::SettlementWindowPassed,);
 
-            let mut intent = Intents::<T>::get(intent_id)
-                .ok_or(Error::<T>::IntentNotFound)?;
+            let mut intent = Intents::<T>::get(intent_id).ok_or(Error::<T>::IntentNotFound)?;
             ensure!(
                 intent.status == crate::settlement::IntentStatus::Committed,
                 Error::<T>::IntentNotCommitted,
@@ -1465,11 +1408,10 @@ pub mod pallet {
             let profit = actual_out.saturating_sub(commitment.committed_amount_out);
 
             let profit_u128: u128 = profit.saturated_into::<u128>();
-            let (net_profit_u128, protocol_fee_u128) =
-                crate::settlement::split_solver_profit_u128(
-                    profit_u128,
-                    crate::settlement::SOLVER_PROFIT_FEE_BPS,
-                );
+            let (net_profit_u128, protocol_fee_u128) = crate::settlement::split_solver_profit_u128(
+                profit_u128,
+                crate::settlement::SOLVER_PROFIT_FEE_BPS,
+            );
             let net_profit: T::Balance = net_profit_u128.saturated_into();
             let protocol_fee: T::Balance = protocol_fee_u128.saturated_into();
 
@@ -1511,9 +1453,8 @@ pub mod pallet {
             FillCommitments::<T>::remove(intent_id);
 
             if let Some(mut solver) = Solvers::<T>::get(commitment.solver_id) {
-                solver.reputation = solver
-                    .reputation
-                    .saturating_add(crate::settlement::REPUTATION_FILL_REWARD);
+                solver.reputation =
+                    solver.reputation.saturating_add(crate::settlement::REPUTATION_FILL_REWARD);
                 solver.fills_completed = solver.fills_completed.saturating_add(1);
                 solver.active_commitments = solver.active_commitments.saturating_sub(1);
                 Solvers::<T>::insert(commitment.solver_id, solver);
@@ -1543,32 +1484,27 @@ pub mod pallet {
         pub fn slash_solver(origin: OriginFor<T>, intent_id: u64) -> DispatchResult {
             let slasher = ensure_signed(origin)?;
 
-            let commitment = FillCommitments::<T>::get(intent_id)
-                .ok_or(Error::<T>::IntentNotCommitted)?;
+            let commitment =
+                FillCommitments::<T>::get(intent_id).ok_or(Error::<T>::IntentNotCommitted)?;
 
             let now = frame_system::Pallet::<T>::block_number();
-            ensure!(
-                now > commitment.settle_by,
-                Error::<T>::SettlementWindowNotPassed,
-            );
+            ensure!(now > commitment.settle_by, Error::<T>::SettlementWindowNotPassed,);
 
-            let mut intent = Intents::<T>::get(intent_id)
-                .ok_or(Error::<T>::IntentNotFound)?;
+            let mut intent = Intents::<T>::get(intent_id).ok_or(Error::<T>::IntentNotFound)?;
             ensure!(
                 intent.status == crate::settlement::IntentStatus::Committed,
                 Error::<T>::IntentNotCommitted,
             );
 
-            let mut solver = Solvers::<T>::get(commitment.solver_id)
-                .ok_or(Error::<T>::SolverNotRegistered)?;
+            let mut solver =
+                Solvers::<T>::get(commitment.solver_id).ok_or(Error::<T>::SolverNotRegistered)?;
             let bond = solver.bond;
 
             let bond_u128: u128 = bond.saturated_into::<u128>();
-            let (to_treasury_u128, to_slasher_u128) =
-                crate::settlement::split_slashed_bond_u128(
-                    bond_u128,
-                    crate::settlement::SLASHER_REWARD_BPS,
-                );
+            let (to_treasury_u128, to_slasher_u128) = crate::settlement::split_slashed_bond_u128(
+                bond_u128,
+                crate::settlement::SLASHER_REWARD_BPS,
+            );
             let to_treasury: T::Balance = to_treasury_u128.saturated_into();
             let to_slasher: T::Balance = to_slasher_u128.saturated_into();
 
@@ -1599,8 +1535,8 @@ pub mod pallet {
             }
 
             // Refund the user.
-            let (escrow_asset, escrow_amount) = IntentEscrowBalances::<T>::get(intent_id)
-                .ok_or(Error::<T>::IntentNotFound)?;
+            let (escrow_asset, escrow_amount) =
+                IntentEscrowBalances::<T>::get(intent_id).ok_or(Error::<T>::IntentNotFound)?;
             let intent_escrow = Self::intent_escrow_account();
 
             T::Assets::transfer(
@@ -1618,9 +1554,8 @@ pub mod pallet {
             FillCommitments::<T>::remove(intent_id);
 
             solver.bond = Zero::zero();
-            solver.reputation = solver
-                .reputation
-                .saturating_add(crate::settlement::REPUTATION_SLASH_PENALTY);
+            solver.reputation =
+                solver.reputation.saturating_add(crate::settlement::REPUTATION_SLASH_PENALTY);
             solver.fills_slashed = solver.fills_slashed.saturating_add(1);
             solver.active_commitments = solver.active_commitments.saturating_sub(1);
             solver.active = false;
@@ -1650,14 +1585,10 @@ pub mod pallet {
         /// not settled go through `slash_solver` instead.
         #[pallet::call_index(12)]
         #[pallet::weight(<T as Config>::WeightInfo::refund_expired_intent())]
-        pub fn refund_expired_intent(
-            origin: OriginFor<T>,
-            intent_id: u64,
-        ) -> DispatchResult {
+        pub fn refund_expired_intent(origin: OriginFor<T>, intent_id: u64) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            let mut intent = Intents::<T>::get(intent_id)
-                .ok_or(Error::<T>::IntentNotFound)?;
+            let mut intent = Intents::<T>::get(intent_id).ok_or(Error::<T>::IntentNotFound)?;
 
             ensure!(intent.user == who, Error::<T>::NotIntentOwner);
             ensure!(
@@ -1668,18 +1599,12 @@ pub mod pallet {
             let now = frame_system::Pallet::<T>::block_number();
             ensure!(now >= intent.deadline, Error::<T>::DeadlineNotPassed);
 
-            let (escrow_asset, escrow_amount) = IntentEscrowBalances::<T>::get(intent_id)
-                .ok_or(Error::<T>::IntentNotFound)?;
+            let (escrow_asset, escrow_amount) =
+                IntentEscrowBalances::<T>::get(intent_id).ok_or(Error::<T>::IntentNotFound)?;
             let intent_escrow = Self::intent_escrow_account();
 
-            T::Assets::transfer(
-                escrow_asset,
-                &intent_escrow,
-                &who,
-                escrow_amount,
-                Expendable,
-            )
-            .map_err(|_| Error::<T>::InvalidAmount)?;
+            T::Assets::transfer(escrow_asset, &intent_escrow, &who, escrow_amount, Expendable)
+                .map_err(|_| Error::<T>::InvalidAmount)?;
 
             IntentEscrowBalances::<T>::remove(intent_id);
             intent.status = crate::settlement::IntentStatus::Expired;
@@ -1785,7 +1710,10 @@ pub mod pallet {
         /// `T::CreatorFeeRecipient` at call time, may call.
         #[pallet::call_index(18)]
         #[pallet::weight(<T as Config>::WeightInfo::claim_pool_creator_fees())]
-        pub fn claim_pool_creator_fees(origin: OriginFor<T>, asset: T::AssetKind) -> DispatchResult {
+        pub fn claim_pool_creator_fees(
+            origin: OriginFor<T>,
+            asset: T::AssetKind,
+        ) -> DispatchResult {
             let who = ensure_signed(origin)?;
             let recipient = T::CreatorFeeRecipient::creator_fee_recipient(&asset)
                 .ok_or(Error::<T>::NoCreatorForAsset)?;
@@ -1874,10 +1802,7 @@ pub mod pallet {
 
         /// Finding 5: canonicalize a pair so that the lexicographically smaller
         /// encoded asset comes first. Prevents duplicate pools for (A,B) vs (B,A).
-        pub fn canonical_pair(
-            a: T::AssetKind,
-            b: T::AssetKind,
-        ) -> (T::AssetKind, T::AssetKind) {
+        pub fn canonical_pair(a: T::AssetKind, b: T::AssetKind) -> (T::AssetKind, T::AssetKind) {
             if a.encode() <= b.encode() {
                 (a, b)
             } else {
@@ -1991,10 +1916,7 @@ pub mod pallet {
 
         /// Finding 4: whitelist allowed fee tiers (0.1%, 0.3%, 1.0%).
         fn ensure_valid_fee_tier(fee_tier: u32) -> DispatchResult {
-            ensure!(
-                fee_tier == 1 || fee_tier == 3 || fee_tier == 10,
-                Error::<T>::InvalidFeeTier
-            );
+            ensure!(fee_tier == 1 || fee_tier == 3 || fee_tier == 10, Error::<T>::InvalidFeeTier);
             Ok(())
         }
 
@@ -2024,7 +1946,11 @@ pub mod pallet {
         /// Callers must have checked that no pool exists. D9: the snapshotted
         /// split must fit the tier (`InvalidFeeRouting` otherwise — at seed
         /// time that surfaces as a deferred graduation, FM-11).
-        fn insert_new_pool(pair: &(T::AssetKind, T::AssetKind), fee_tier: u32, routing: FeeRouting) -> DispatchResult {
+        fn insert_new_pool(
+            pair: &(T::AssetKind, T::AssetKind),
+            fee_tier: u32,
+            routing: FeeRouting,
+        ) -> DispatchResult {
             ensure!(routing.is_valid_for(fee_tier), Error::<T>::InvalidFeeRouting);
             let pool = PoolInfo {
                 reserve_a: Zero::zero(),
@@ -2076,7 +2002,9 @@ pub mod pallet {
                 // D4: a seeded pool has a creator (the launch's fee recipient),
                 // so it snapshots the full default split. An adopted empty
                 // record keeps whatever split it carries.
-                None => Self::insert_new_pool(&pair, fee_tier, Self::routing_for_new_pool(&pair, true))?,
+                None => {
+                    Self::insert_new_pool(&pair, fee_tier, Self::routing_for_new_pool(&pair, true))?
+                },
                 Some(existing) => {
                     let shares = TotalLiquidity::<T>::get(&pair).unwrap_or_else(Zero::zero);
                     ensure!(shares.is_zero(), Error::<T>::PoolAlreadySeeded);
@@ -2101,7 +2029,12 @@ pub mod pallet {
                 [pair.1.clone(), pair.0.clone()]
             };
             for swept in sweep_order {
-                let held = T::Assets::reducible_balance(swept.clone(), &pool.pool_account, Expendable, Polite);
+                let held = T::Assets::reducible_balance(
+                    swept.clone(),
+                    &pool.pool_account,
+                    Expendable,
+                    Polite,
+                );
                 if held.is_zero() {
                     continue;
                 }
@@ -2114,7 +2047,13 @@ pub mod pallet {
                 // own storage layer so the underlying error leaves nothing
                 // half-applied before the outer transactional rollback.
                 frame_support::storage::with_storage_layer(|| {
-                    T::Assets::transfer(swept.clone(), &pool.pool_account, &excess_to, held, Expendable)
+                    T::Assets::transfer(
+                        swept.clone(),
+                        &pool.pool_account,
+                        &excess_to,
+                        held,
+                        Expendable,
+                    )
                 })
                 .map_err(|_| Error::<T>::ExcessRecipientCannotReceive)?;
                 Self::deposit_event(Event::PreSeedBalanceSwept {
@@ -2132,8 +2071,11 @@ pub mod pallet {
             //    non-sufficient asset. Do not rely on `canonical_pair` putting
             //    the native asset first.
             let asset_is_a = pair.0.encode() == asset.encode();
-            let (amount_a, amount_b) =
-                if asset_is_a { (amount_asset, amount_quote) } else { (amount_quote, amount_asset) };
+            let (amount_a, amount_b) = if asset_is_a {
+                (amount_asset, amount_quote)
+            } else {
+                (amount_quote, amount_asset)
+            };
 
             // Finding 1: first deposit — burn MINIMUM_LIQUIDITY shares permanently.
             let raw_shares = Self::sqrt_of_product(amount_a, amount_b)?;
@@ -2203,16 +2145,18 @@ pub mod pallet {
             amount_a_min: T::Balance,
             amount_b_min: T::Balance,
         ) -> Result<T::Balance, DispatchError> {
-            ensure!(
-                amount_a > Zero::zero() && amount_b > Zero::zero(),
-                Error::<T>::ZeroAmount
-            );
+            ensure!(amount_a > Zero::zero() && amount_b > Zero::zero(), Error::<T>::ZeroAmount);
 
             // Finding 5 + D5: canonicalize the pair AND the amounts/minimums,
             // which the caller gave in (asset_a, asset_b) order. From here on
             // `amount_a` belongs to `pair.0` and `amount_b` to `pair.1`.
             let (pair, (amount_a, amount_a_min), (amount_b, amount_b_min)) =
-                Self::canonical_pair_with(asset_a, asset_b, (amount_a, amount_a_min), (amount_b, amount_b_min));
+                Self::canonical_pair_with(
+                    asset_a,
+                    asset_b,
+                    (amount_a, amount_a_min),
+                    (amount_b, amount_b_min),
+                );
             let mut pool = Pools::<T>::get(&pair).ok_or(Error::<T>::PoolNotFound)?;
 
             // D6: price the deposit against what the pool actually holds. The
@@ -2223,20 +2167,17 @@ pub mod pallet {
             // so swap → add → remove skimmed existing LPs' fees.
             Self::sync_reserves(&pair, &mut pool);
 
-            let total_shares =
-                TotalLiquidity::<T>::get(&pair).unwrap_or_else(T::Balance::zero);
+            let total_shares = TotalLiquidity::<T>::get(&pair).unwrap_or_else(T::Balance::zero);
 
             // Determine actual deposit amounts and shares to mint.
-            let (actual_a, actual_b, total_new_shares, shares_to_mint) = if total_shares.is_zero()
-            {
+            let (actual_a, actual_b, total_new_shares, shares_to_mint) = if total_shares.is_zero() {
                 // Finding 1: first deposit — burn MINIMUM_LIQUIDITY shares permanently.
                 // D1: wide precision; integer sqrt rounds DOWN, in the pool's favour.
                 let raw_shares = Self::sqrt_of_product(amount_a, amount_b)?;
                 let min_liq: T::Balance = MINIMUM_LIQUIDITY.into();
                 ensure!(raw_shares > min_liq, Error::<T>::InsufficientInitialLiquidity);
-                let shares_to_mint = raw_shares
-                    .checked_sub(&min_liq)
-                    .ok_or(Error::<T>::Overflow)?;
+                let shares_to_mint =
+                    raw_shares.checked_sub(&min_liq).ok_or(Error::<T>::Overflow)?;
                 // total includes the locked minimum; user only receives the remainder.
                 (amount_a, amount_b, raw_shares, shares_to_mint)
             } else {
@@ -2248,8 +2189,7 @@ pub mod pallet {
                 let (actual_a, actual_b) = if optimal_b <= amount_b {
                     (amount_a, optimal_b)
                 } else {
-                    let optimal_a =
-                        Self::mul_div_floor(amount_b, pool.reserve_a, pool.reserve_b)?;
+                    let optimal_a = Self::mul_div_floor(amount_b, pool.reserve_a, pool.reserve_b)?;
                     (optimal_a, amount_b)
                 };
 
@@ -2267,25 +2207,11 @@ pub mod pallet {
             ensure!(actual_a >= amount_a_min, Error::<T>::SlippageExceeded);
             ensure!(actual_b >= amount_b_min, Error::<T>::SlippageExceeded);
 
-            T::Assets::transfer(
-                pair.0.clone(),
-                who,
-                &pool.pool_account,
-                actual_a,
-                Expendable,
-            )?;
-            T::Assets::transfer(
-                pair.1.clone(),
-                who,
-                &pool.pool_account,
-                actual_b,
-                Expendable,
-            )?;
+            T::Assets::transfer(pair.0.clone(), who, &pool.pool_account, actual_a, Expendable)?;
+            T::Assets::transfer(pair.1.clone(), who, &pool.pool_account, actual_b, Expendable)?;
 
-            pool.reserve_a =
-                pool.reserve_a.checked_add(&actual_a).ok_or(Error::<T>::Overflow)?;
-            pool.reserve_b =
-                pool.reserve_b.checked_add(&actual_b).ok_or(Error::<T>::Overflow)?;
+            pool.reserve_a = pool.reserve_a.checked_add(&actual_a).ok_or(Error::<T>::Overflow)?;
+            pool.reserve_b = pool.reserve_b.checked_add(&actual_b).ok_or(Error::<T>::Overflow)?;
             Pools::<T>::insert(&pair, &pool);
 
             let new_total =
@@ -2293,29 +2219,23 @@ pub mod pallet {
             TotalLiquidity::<T>::insert(&pair, new_total);
 
             let current_block = frame_system::Pallet::<T>::block_number();
-            LiquidityPositions::<T>::try_mutate(
-                who,
-                &pair,
-                |maybe_pos| -> DispatchResult {
-                    match maybe_pos {
-                        Some(pos) => {
-                            // Finding 9: keep original entry_block on top-up.
-                            pos.shares = pos
-                                .shares
-                                .checked_add(&shares_to_mint)
-                                .ok_or(Error::<T>::Overflow)?;
-                        },
-                        None => {
-                            *maybe_pos = Some(LiquidityPosition {
-                                shares: shares_to_mint,
-                                entry_block: current_block,
-                                locked_until: None,
-                            });
-                        },
-                    }
-                    Ok(())
-                },
-            )?;
+            LiquidityPositions::<T>::try_mutate(who, &pair, |maybe_pos| -> DispatchResult {
+                match maybe_pos {
+                    Some(pos) => {
+                        // Finding 9: keep original entry_block on top-up.
+                        pos.shares =
+                            pos.shares.checked_add(&shares_to_mint).ok_or(Error::<T>::Overflow)?;
+                    },
+                    None => {
+                        *maybe_pos = Some(LiquidityPosition {
+                            shares: shares_to_mint,
+                            entry_block: current_block,
+                            locked_until: None,
+                        });
+                    },
+                }
+                Ok(())
+            })?;
 
             Self::deposit_event(Event::LiquidityAdded {
                 provider: who.clone(),
@@ -2344,18 +2264,14 @@ pub mod pallet {
         ) -> DispatchResult {
             let pair = Self::canonical_pair(asset_a, asset_b);
 
-            LiquidityPositions::<T>::try_mutate(
-                who,
-                &pair,
-                |maybe_pos| -> DispatchResult {
-                    let pos = maybe_pos.as_mut().ok_or(Error::<T>::InsufficientShares)?;
-                    if let Some(existing) = pos.locked_until {
-                        ensure!(lock_until >= existing, Error::<T>::LockCannotBeShortened);
-                    }
-                    pos.locked_until = Some(lock_until);
-                    Ok(())
-                },
-            )?;
+            LiquidityPositions::<T>::try_mutate(who, &pair, |maybe_pos| -> DispatchResult {
+                let pos = maybe_pos.as_mut().ok_or(Error::<T>::InsufficientShares)?;
+                if let Some(existing) = pos.locked_until {
+                    ensure!(lock_until >= existing, Error::<T>::LockCannotBeShortened);
+                }
+                pos.locked_until = Some(lock_until);
+                Ok(())
+            })?;
 
             Self::deposit_event(Event::LiquidityLocked {
                 who: who.clone(),
@@ -2437,7 +2353,8 @@ pub mod pallet {
             let native = T::NativeAsset::get();
             let native_in = asset_in.encode() == native.encode();
             let native_out = asset_out.encode() == native.encode();
-            let routing = if native_in || native_out { pool.routing } else { FeeRouting::default() };
+            let routing =
+                if native_in || native_out { pool.routing } else { FeeRouting::default() };
             let tier_bps: u16 = (pool.fee_tier as u16).saturating_mul(10);
             let pool_bps = tier_bps.saturating_sub(routing.routed_bps());
 
@@ -2453,14 +2370,11 @@ pub mod pallet {
                 // the fee DOWN by < 1 unit). Direction unchanged by this change.
                 Self::mul_div_floor(amount_in, fee_tier_bal, denominator_bal)?
             };
-            let amount_in_after_fee =
-                amount_in.checked_sub(&fee).ok_or(Error::<T>::Overflow)?;
+            let amount_in_after_fee = amount_in.checked_sub(&fee).ok_or(Error::<T>::Overflow)?;
 
             // D1: constant-product output in wide precision; floor rounds
             // amount_out DOWN, in the pool's favour, so k never decreases.
-            let denom = reserve_in
-                .checked_add(&amount_in_after_fee)
-                .ok_or(Error::<T>::Overflow)?;
+            let denom = reserve_in.checked_add(&amount_in_after_fee).ok_or(Error::<T>::Overflow)?;
             let amount_out_gross = Self::mul_div_floor(reserve_out, amount_in_after_fee, denom)?;
 
             // Routed slices, always native.
@@ -2515,13 +2429,7 @@ pub mod pallet {
             // (`NotExpendable`), which would leave every holder unable to
             // sell their whole position (R11). Only the native side keeps.
             let input = if native_in { input } else { Expendable };
-            T::Assets::transfer(
-                asset_in.clone(),
-                who,
-                &pool.pool_account,
-                amount_in,
-                input,
-            )?;
+            T::Assets::transfer(asset_in.clone(), who, &pool.pool_account, amount_in, input)?;
             T::Assets::transfer(
                 asset_out.clone(),
                 &pool.pool_account,
@@ -2550,7 +2458,13 @@ pub mod pallet {
             // D9: the treasury slice is pushed to the sink (see `TreasurySink`
             // for why a push is safe here and was not for the other two).
             if let Some(vault) = sink {
-                T::Assets::transfer(native.clone(), &pool.pool_account, &vault, treasury, Expendable)?;
+                T::Assets::transfer(
+                    native.clone(),
+                    &pool.pool_account,
+                    &vault,
+                    treasury,
+                    Expendable,
+                )?;
                 T::TreasurySink::note_fee(&other, treasury);
             }
 
@@ -2559,28 +2473,22 @@ pub mod pallet {
             // reserves until the next sync. The output side drops by the gross
             // amount (net to the trader + routed slices).
             if flipped {
-                pool.reserve_b = pool
-                    .reserve_b
-                    .checked_add(&amount_in_after_fee)
-                    .ok_or(Error::<T>::Overflow)?;
+                pool.reserve_b =
+                    pool.reserve_b.checked_add(&amount_in_after_fee).ok_or(Error::<T>::Overflow)?;
                 pool.reserve_a = pool
                     .reserve_a
                     .checked_sub(&amount_out_gross)
                     .ok_or(Error::<T>::InsufficientLiquidity)?;
             } else {
-                pool.reserve_a = pool
-                    .reserve_a
-                    .checked_add(&amount_in_after_fee)
-                    .ok_or(Error::<T>::Overflow)?;
+                pool.reserve_a =
+                    pool.reserve_a.checked_add(&amount_in_after_fee).ok_or(Error::<T>::Overflow)?;
                 pool.reserve_b = pool
                     .reserve_b
                     .checked_sub(&amount_out_gross)
                     .ok_or(Error::<T>::InsufficientLiquidity)?;
             }
-            pool.total_fees_collected = pool
-                .total_fees_collected
-                .checked_add(&fee)
-                .ok_or(Error::<T>::Overflow)?;
+            pool.total_fees_collected =
+                pool.total_fees_collected.checked_add(&fee).ok_or(Error::<T>::Overflow)?;
 
             let pool_account_for_event = pool.pool_account.clone();
             Pools::<T>::insert(&pair, pool);
@@ -2622,8 +2530,7 @@ pub mod pallet {
 
         /// Current settlement window.
         pub(crate) fn current_settlement_window() -> BlockNumberFor<T> {
-            SettlementWindowBlocks::<T>::get()
-                .unwrap_or_else(T::DefaultSettlementWindowBlocks::get)
+            SettlementWindowBlocks::<T>::get().unwrap_or_else(T::DefaultSettlementWindowBlocks::get)
         }
 
         /// Current solver bond amount.

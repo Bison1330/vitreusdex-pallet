@@ -1,9 +1,7 @@
 //! Tests for the Vitreus DEX pallet.
 
 use crate::mock::*;
-use crate::{
-    Error, Event, LiquidityPositions, PoolManager, Pools, TotalLiquidity,
-};
+use crate::{Error, Event, LiquidityPositions, PoolManager, Pools, TotalLiquidity};
 use frame_support::{assert_noop, assert_ok};
 
 fn native() -> NativeOrAssetId {
@@ -22,12 +20,7 @@ fn pair() -> (NativeOrAssetId, NativeOrAssetId) {
 #[test]
 fn test_create_pool_success() {
     new_test_ext().execute_with(|| {
-        assert_ok!(VitreusDex::create_pool(
-            RuntimeOrigin::root(),
-            usdc(),
-            vnrg(),
-            10,
-        ));
+        assert_ok!(VitreusDex::create_pool(RuntimeOrigin::root(), usdc(), vnrg(), 10,));
 
         let pool = Pools::<Test>::get(pair()).expect("pool stored");
         assert_eq!(pool.reserve_a, 0);
@@ -45,12 +38,7 @@ fn test_create_pool_success() {
 #[test]
 fn test_create_pool_duplicate_fails() {
     new_test_ext().execute_with(|| {
-        assert_ok!(VitreusDex::create_pool(
-            RuntimeOrigin::root(),
-            usdc(),
-            vnrg(),
-            10,
-        ));
+        assert_ok!(VitreusDex::create_pool(RuntimeOrigin::root(), usdc(), vnrg(), 10,));
         assert_noop!(
             VitreusDex::create_pool(RuntimeOrigin::root(), usdc(), vnrg(), 10),
             Error::<Test>::PoolAlreadyExists
@@ -61,12 +49,7 @@ fn test_create_pool_duplicate_fails() {
 #[test]
 fn test_add_liquidity_first_deposit() {
     new_test_ext().execute_with(|| {
-        assert_ok!(VitreusDex::create_pool(
-            RuntimeOrigin::root(),
-            usdc(),
-            vnrg(),
-            10,
-        ));
+        assert_ok!(VitreusDex::create_pool(RuntimeOrigin::root(), usdc(), vnrg(), 10,));
         assert_ok!(VitreusDex::add_liquidity(
             RuntimeOrigin::signed(ALICE),
             usdc(),
@@ -93,12 +76,7 @@ fn test_add_liquidity_first_deposit() {
 #[test]
 fn test_add_liquidity_subsequent_deposit() {
     new_test_ext().execute_with(|| {
-        assert_ok!(VitreusDex::create_pool(
-            RuntimeOrigin::root(),
-            usdc(),
-            vnrg(),
-            10,
-        ));
+        assert_ok!(VitreusDex::create_pool(RuntimeOrigin::root(), usdc(), vnrg(), 10,));
         // First deposit: 10_000/40_000 → 19_000 user shares, 20_000 total.
         assert_ok!(VitreusDex::add_liquidity(
             RuntimeOrigin::signed(ALICE),
@@ -134,12 +112,7 @@ fn test_add_liquidity_subsequent_deposit() {
 #[test]
 fn test_remove_liquidity_full() {
     new_test_ext().execute_with(|| {
-        assert_ok!(VitreusDex::create_pool(
-            RuntimeOrigin::root(),
-            usdc(),
-            vnrg(),
-            10,
-        ));
+        assert_ok!(VitreusDex::create_pool(RuntimeOrigin::root(), usdc(), vnrg(), 10,));
         assert_ok!(VitreusDex::add_liquidity(
             RuntimeOrigin::signed(ALICE),
             usdc(),
@@ -174,12 +147,7 @@ fn test_remove_liquidity_full() {
 #[test]
 fn test_swap_exact_tokens() {
     new_test_ext().execute_with(|| {
-        assert_ok!(VitreusDex::create_pool(
-            RuntimeOrigin::root(),
-            usdc(),
-            vnrg(),
-            10,
-        ));
+        assert_ok!(VitreusDex::create_pool(RuntimeOrigin::root(), usdc(), vnrg(), 10,));
         assert_ok!(VitreusDex::add_liquidity(
             RuntimeOrigin::signed(ALICE),
             usdc(),
@@ -226,12 +194,7 @@ fn test_swap_exact_tokens() {
 #[test]
 fn test_swap_insufficient_liquidity() {
     new_test_ext().execute_with(|| {
-        assert_ok!(VitreusDex::create_pool(
-            RuntimeOrigin::root(),
-            usdc(),
-            vnrg(),
-            10,
-        ));
+        assert_ok!(VitreusDex::create_pool(RuntimeOrigin::root(), usdc(), vnrg(), 10,));
         // Pool exists but has no liquidity.
         assert_noop!(
             VitreusDex::swap_exact_tokens_for_tokens(
@@ -250,12 +213,7 @@ fn test_swap_insufficient_liquidity() {
 #[test]
 fn test_swap_slippage_protection() {
     new_test_ext().execute_with(|| {
-        assert_ok!(VitreusDex::create_pool(
-            RuntimeOrigin::root(),
-            usdc(),
-            vnrg(),
-            10,
-        ));
+        assert_ok!(VitreusDex::create_pool(RuntimeOrigin::root(), usdc(), vnrg(), 10,));
         assert_ok!(VitreusDex::add_liquidity(
             RuntimeOrigin::signed(ALICE),
             usdc(),
@@ -320,10 +278,7 @@ fn do_create_pool_direct_creates_pool_without_origin() {
 #[test]
 fn do_create_pool_direct_enforces_fee_tier_and_uniqueness() {
     new_test_ext().execute_with(|| {
-        assert_noop!(
-            VitreusDex::do_create_pool(usdc(), vnrg(), 5),
-            Error::<Test>::InvalidFeeTier
-        );
+        assert_noop!(VitreusDex::do_create_pool(usdc(), vnrg(), 5), Error::<Test>::InvalidFeeTier);
         assert_ok!(VitreusDex::do_create_pool(usdc(), vnrg(), 1));
         // Reversed order must still collide with the canonical pair.
         assert_noop!(
@@ -342,9 +297,8 @@ fn do_add_liquidity_for_direct_credits_who_and_returns_shares() {
         let bob_vnrg_before = Assets::balance(VNRG_ID, &BOB);
 
         // First deposit: sqrt(10_000 * 40_000) = 20_000 total, 1_000 locked.
-        let minted =
-            VitreusDex::do_add_liquidity_for(&BOB, usdc(), vnrg(), 10_000, 40_000, 0, 0)
-                .expect("first deposit");
+        let minted = VitreusDex::do_add_liquidity_for(&BOB, usdc(), vnrg(), 10_000, 40_000, 0, 0)
+            .expect("first deposit");
         assert_eq!(minted, 19_000);
 
         // Tokens came out of `who`, not the caller/anyone else.
@@ -423,10 +377,7 @@ fn do_lock_liquidity_for_direct_locks_position() {
         );
 
         assert_ok!(VitreusDex::do_lock_liquidity_for(&BOB, usdc(), vnrg(), 50));
-        assert_eq!(
-            LiquidityPositions::<Test>::get(BOB, pair()).unwrap().locked_until,
-            Some(50)
-        );
+        assert_eq!(LiquidityPositions::<Test>::get(BOB, pair()).unwrap().locked_until, Some(50));
         System::assert_has_event(
             Event::LiquidityLocked { who: BOB, pool: pair(), locked_until: 50 }.into(),
         );
@@ -785,7 +736,8 @@ fn scale_narrowing_errors_instead_of_truncating() {
             Error::<Test>::Overflow
         );
         assert_eq!(TotalLiquidity::<Test>::get(key), Some(total_before));
-        assert!(LiquidityPositions::<Test>::get(BOB, VitreusDex::canonical_pair(native(), meme())).is_none());
+        assert!(LiquidityPositions::<Test>::get(BOB, VitreusDex::canonical_pair(native(), meme()))
+            .is_none());
     });
 }
 
@@ -929,7 +881,14 @@ fn seed_reserved_pool_creates_pool_deposits_stored_amounts_and_locks_forever() {
         // The lock holds at the last representable block.
         System::set_block_number(u64::MAX - 1);
         assert_noop!(
-            VitreusDex::remove_liquidity(RuntimeOrigin::signed(ESCROW), native(), launch(), 1, 0, 0),
+            VitreusDex::remove_liquidity(
+                RuntimeOrigin::signed(ESCROW),
+                native(),
+                launch(),
+                1,
+                0,
+                0
+            ),
             Error::<Test>::PoolLocked
         );
         // ... and cannot be shortened through either lock path (D3).
@@ -999,7 +958,12 @@ fn seed_sweeps_pre_seed_donations_so_opening_price_is_stored_ratio() {
             pool_account,
             donated_native
         ));
-        assert_ok!(Assets::transfer(RuntimeOrigin::signed(BOB), LAUNCH_ID, pool_account, donated_token));
+        assert_ok!(Assets::transfer(
+            RuntimeOrigin::signed(BOB),
+            LAUNCH_ID,
+            pool_account,
+            donated_token
+        ));
         assert_eq!(Balances::free_balance(pool_account), donated_native);
         assert_eq!(Assets::balance(LAUNCH_ID, pool_account), donated_token);
         assert_eq!(Balances::free_balance(TREASURY), UNIT);
@@ -1034,7 +998,10 @@ fn seed_sweeps_pre_seed_donations_so_opening_price_is_stored_ratio() {
         // Tracked reserves and shares reflect only the stored amounts.
         let pool = Pools::<Test>::get(key.clone()).unwrap();
         assert_eq!((pool.reserve_a, pool.reserve_b), (SEED_NATIVE, SEED_TOKEN));
-        assert_eq!(shares, isqrt_u256(SEED_NATIVE, SEED_TOKEN) - u128::from(crate::MINIMUM_LIQUIDITY));
+        assert_eq!(
+            shares,
+            isqrt_u256(SEED_NATIVE, SEED_TOKEN) - u128::from(crate::MINIMUM_LIQUIDITY)
+        );
 
         // The decisive check: the first swap runs `sync_reserves`, which reads
         // the pool account's live balances. If the donation had been left in
@@ -1064,7 +1031,11 @@ fn seed_is_transactional_when_sweep_or_deposit_fails() {
     new_test_ext().execute_with(|| {
         setup_reserved_asset();
         let pool_account = VitreusDex::pool_account_for(native(), launch());
-        assert_ok!(Balances::transfer_allow_death(RuntimeOrigin::signed(BOB), pool_account, 5 * UNIT));
+        assert_ok!(Balances::transfer_allow_death(
+            RuntimeOrigin::signed(BOB),
+            pool_account,
+            5 * UNIT
+        ));
 
         // An escrow that cannot fund the deposit: the sweep must not stick.
         assert_ok!(Balances::force_set_balance(RuntimeOrigin::root(), ESCROW, 1));
@@ -1184,8 +1155,17 @@ fn seed_burns_pre_seed_donation_when_recipient_cannot_receive_it() {
         // the non-sufficient token, so native goes in first (as an attacker would).
         let donated_native = 5 * UNIT;
         let donated_token = 3 * SEED_TOKEN;
-        assert_ok!(Balances::transfer_allow_death(RuntimeOrigin::signed(BOB), pool_account, donated_native));
-        assert_ok!(Assets::transfer(RuntimeOrigin::signed(BOB), LAUNCH_ID, pool_account, donated_token));
+        assert_ok!(Balances::transfer_allow_death(
+            RuntimeOrigin::signed(BOB),
+            pool_account,
+            donated_native
+        ));
+        assert_ok!(Assets::transfer(
+            RuntimeOrigin::signed(BOB),
+            LAUNCH_ID,
+            pool_account,
+            donated_token
+        ));
         let issuance_before = Assets::total_supply(LAUNCH_ID);
         let escrow_native_before = Balances::free_balance(ESCROW);
         let escrow_token_before = Assets::balance(LAUNCH_ID, ESCROW);
@@ -1347,16 +1327,17 @@ fn d5_pool_manager_add_liquidity_for_non_canonical_order() {
         // The in-runtime trait path (what the launchpad's rescue uses) is the
         // same body; check it through the trait with a reversed pair.
         assert_ok!(VitreusDex::do_create_pool(native(), usdc(), 3));
-        let minted = <VitreusDex as PoolManager<u128, NativeOrAssetId, u128, u64>>::add_liquidity_for(
-            &CHARLIE,
-            usdc(),
-            native(),
-            100_000,
-            40_000,
-            100_000,
-            40_000,
-        )
-        .expect("deposit");
+        let minted =
+            <VitreusDex as PoolManager<u128, NativeOrAssetId, u128, u64>>::add_liquidity_for(
+                &CHARLIE,
+                usdc(),
+                native(),
+                100_000,
+                40_000,
+                100_000,
+                40_000,
+            )
+            .expect("deposit");
         assert_eq!(minted, 63_245 - 1_000);
         let pool = Pools::<Test>::get(VitreusDex::canonical_pair(native(), usdc())).unwrap();
         assert_eq!((pool.reserve_a, pool.reserve_b), (40_000, 100_000));
@@ -1370,11 +1351,17 @@ fn d5_pool_manager_add_liquidity_for_non_canonical_order() {
 // ===========================================================================
 
 use crate::{
-    CreatorFeesUnclaimed, DefaultFeeRouting, FeeRouting, ProtocolFeeRecipient, ProtocolFeesUnclaimed,
+    CreatorFeesUnclaimed, DefaultFeeRouting, FeeRouting, ProtocolFeeRecipient,
+    ProtocolFeesUnclaimed,
 };
 
 fn set_routing(protocol_bps: u16, creator_bps: u16) {
-    assert_ok!(VitreusDex::set_default_fee_routing(RuntimeOrigin::root(), protocol_bps, creator_bps, 0));
+    assert_ok!(VitreusDex::set_default_fee_routing(
+        RuntimeOrigin::root(),
+        protocol_bps,
+        creator_bps,
+        0
+    ));
 }
 
 fn escrow() -> u128 {
@@ -1433,9 +1420,15 @@ fn d4_set_default_fee_routing_validates_and_requires_manage_origin() {
             Error::<Test>::InvalidFeeRouting
         );
         set_routing(5, 5);
-        assert_eq!(DefaultFeeRouting::<Test>::get(), FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 0 });
+        assert_eq!(
+            DefaultFeeRouting::<Test>::get(),
+            FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 0 }
+        );
         System::assert_has_event(
-            Event::DefaultFeeRoutingSet { routing: FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 0 } }.into(),
+            Event::DefaultFeeRoutingSet {
+                routing: FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 0 },
+            }
+            .into(),
         );
         set_routing(10, 0);
         assert_eq!(DefaultFeeRouting::<Test>::get().routed_bps(), 10);
@@ -1452,7 +1445,10 @@ fn d4_create_pool_snapshots_protocol_share_and_folds_creator_share() {
         // creator share, so it folds into the pool.
         assert_ok!(VitreusDex::create_pool(RuntimeOrigin::root(), native(), usdc(), 3));
         let key = VitreusDex::canonical_pair(native(), usdc());
-        assert_eq!(Pools::<Test>::get(key).unwrap().routing, FeeRouting { protocol_bps: 5, creator_bps: 0, treasury_bps: 0 });
+        assert_eq!(
+            Pools::<Test>::get(key).unwrap().routing,
+            FeeRouting { protocol_bps: 5, creator_bps: 0, treasury_bps: 0 }
+        );
         // No native side: nothing can be routed in VTRS.
         assert_ok!(VitreusDex::create_pool(RuntimeOrigin::root(), usdc(), vnrg(), 3));
         assert_eq!(Pools::<Test>::get(pair()).unwrap().routing, FeeRouting::default());
@@ -1463,7 +1459,10 @@ fn d4_create_pool_snapshots_protocol_share_and_folds_creator_share() {
 fn d4_seed_snapshots_full_default_and_later_changes_never_touch_existing_pools() {
     new_test_ext().execute_with(|| {
         let key = seeded_launch_pool(5, 5);
-        assert_eq!(Pools::<Test>::get(key.clone()).unwrap().routing, FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 0 });
+        assert_eq!(
+            Pools::<Test>::get(key.clone()).unwrap().routing,
+            FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 0 }
+        );
 
         set_routing(10, 0);
         assert_eq!(
@@ -1473,7 +1472,10 @@ fn d4_seed_snapshots_full_default_and_later_changes_never_touch_existing_pools()
         );
         assert_ok!(VitreusDex::create_pool(RuntimeOrigin::root(), native(), usdc(), 1));
         let usdc_key = VitreusDex::canonical_pair(native(), usdc());
-        assert_eq!(Pools::<Test>::get(usdc_key).unwrap().routing, FeeRouting { protocol_bps: 10, creator_bps: 0, treasury_bps: 0 });
+        assert_eq!(
+            Pools::<Test>::get(usdc_key).unwrap().routing,
+            FeeRouting { protocol_bps: 10, creator_bps: 0, treasury_bps: 0 }
+        );
     });
 }
 
@@ -1507,7 +1509,9 @@ fn d4_swap_native_in_routes_slices_out_of_the_fee() {
         assert_eq!(Balances::free_balance(escrow()), protocol + creator);
         assert_eq!(ProtocolFeesUnclaimed::<Test>::get(), protocol);
         assert_eq!(CreatorFeesUnclaimed::<Test>::get(key.clone()), creator);
-        System::assert_has_event(Event::FeesRouted { pool: key.clone(), protocol, creator, treasury: 0 }.into());
+        System::assert_has_event(
+            Event::FeesRouted { pool: key.clone(), protocol, creator, treasury: 0 }.into(),
+        );
 
         // Reserves unchanged from the pre-D4 formula; the pool account holds
         // reserves plus only the pool's share of the fee, so a later
@@ -1516,7 +1520,10 @@ fn d4_swap_native_in_routes_slices_out_of_the_fee() {
         assert_eq!(pool.reserve_a, SEED_NATIVE + after_fee);
         assert_eq!(pool.reserve_b, SEED_TOKEN - expected_out);
         assert_eq!(pool.total_fees_collected, fee);
-        assert_eq!(Balances::free_balance(pool_account), pool.reserve_a + (fee - protocol - creator));
+        assert_eq!(
+            Balances::free_balance(pool_account),
+            pool.reserve_a + (fee - protocol - creator)
+        );
 
         let k_before = sp_core::U256::from(SEED_NATIVE) * sp_core::U256::from(SEED_TOKEN);
         let k_after = sp_core::U256::from(pool.reserve_a) * sp_core::U256::from(pool.reserve_b);
@@ -1585,7 +1592,15 @@ fn d4_pool_without_native_side_routes_nothing() {
     new_test_ext().execute_with(|| {
         set_routing(5, 5);
         assert_ok!(VitreusDex::create_pool(RuntimeOrigin::root(), usdc(), vnrg(), 3));
-        assert_ok!(VitreusDex::add_liquidity(RuntimeOrigin::signed(ALICE), usdc(), vnrg(), 100_000, 100_000, 0, 0));
+        assert_ok!(VitreusDex::add_liquidity(
+            RuntimeOrigin::signed(ALICE),
+            usdc(),
+            vnrg(),
+            100_000,
+            100_000,
+            0,
+            0
+        ));
         assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
             RuntimeOrigin::signed(BOB),
             usdc(),
@@ -1673,7 +1688,9 @@ fn d4_withdraw_protocol_fees_is_permissionless_and_follows_the_recipient() {
         assert_ok!(VitreusDex::withdraw_protocol_fees(RuntimeOrigin::signed(BOB)));
         assert_eq!(Balances::free_balance(TREASURY) - treasury_before, slice);
         assert_eq!(ProtocolFeesUnclaimed::<Test>::get(), 0);
-        System::assert_has_event(Event::ProtocolFeesWithdrawn { recipient: TREASURY, amount: slice }.into());
+        System::assert_has_event(
+            Event::ProtocolFeesWithdrawn { recipient: TREASURY, amount: slice }.into(),
+        );
 
         // Governance redirects; fees accrued before the change follow it.
         swap();
@@ -1929,13 +1946,25 @@ fn d8_second_pool_on_a_shared_account_would_read_the_first_pools_reserves() {
 // share when the asset has no sink. The routing bound is tier-relative.
 // ===========================================================================
 
-use crate::{mock::{SINK_NOTED, SINK_VAULT, VAULT}, LastSwapBlock, MIN_FEE_TIER, MIN_LAUNCH_FEE_TIER};
+use crate::{
+    mock::{SINK_NOTED, SINK_VAULT, VAULT},
+    LastSwapBlock, MIN_FEE_TIER, MIN_LAUNCH_FEE_TIER,
+};
 
 fn set_routing3(protocol_bps: u16, creator_bps: u16, treasury_bps: u16) {
-    assert_ok!(VitreusDex::set_default_fee_routing(RuntimeOrigin::root(), protocol_bps, creator_bps, treasury_bps));
+    assert_ok!(VitreusDex::set_default_fee_routing(
+        RuntimeOrigin::root(),
+        protocol_bps,
+        creator_bps,
+        treasury_bps
+    ));
 }
 
-fn seeded_launch_pool3(protocol_bps: u16, creator_bps: u16, treasury_bps: u16) -> (NativeOrAssetId, NativeOrAssetId) {
+fn seeded_launch_pool3(
+    protocol_bps: u16,
+    creator_bps: u16,
+    treasury_bps: u16,
+) -> (NativeOrAssetId, NativeOrAssetId) {
     setup_reserved_asset();
     set_routing3(protocol_bps, creator_bps, treasury_bps);
     seed(ESCROW).expect("seed");
@@ -1948,7 +1977,10 @@ fn d9_routing_is_tier_relative() {
     let r = FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 10 };
     assert!(r.is_valid_for(3) && r.is_valid_for(10));
     assert!(!r.is_valid_for(1), "20 bps does not fit a 10 bps tier");
-    assert!(FeeRouting { protocol_bps: 10, creator_bps: 10, treasury_bps: 10 }.is_valid_for(3), "a pool may route its whole tier");
+    assert!(
+        FeeRouting { protocol_bps: 10, creator_bps: 10, treasury_bps: 10 }.is_valid_for(3),
+        "a pool may route its whole tier"
+    );
     assert!(!FeeRouting { protocol_bps: 10, creator_bps: 10, treasury_bps: 11 }.is_valid_for(3));
     // The default rule: protocol alone fits the smallest tier, all three fit the smallest launch tier.
     assert_eq!((MIN_FEE_TIER, MIN_LAUNCH_FEE_TIER), (1, 3));
@@ -1962,10 +1994,16 @@ fn d9_routing_is_tier_relative() {
         set_routing3(5, 5, 10);
         assert_ok!(VitreusDex::create_pool(RuntimeOrigin::root(), native(), usdc(), 1));
         let key = VitreusDex::canonical_pair(native(), usdc());
-        assert_eq!(Pools::<Test>::get(key).unwrap().routing, FeeRouting { protocol_bps: 5, creator_bps: 0, treasury_bps: 0 });
+        assert_eq!(
+            Pools::<Test>::get(key).unwrap().routing,
+            FeeRouting { protocol_bps: 5, creator_bps: 0, treasury_bps: 0 }
+        );
         // ... and a seeded tier-3 pool carries all three.
         let key = seeded_launch_pool3(5, 5, 10);
-        assert_eq!(Pools::<Test>::get(key).unwrap().routing, FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 10 });
+        assert_eq!(
+            Pools::<Test>::get(key).unwrap().routing,
+            FeeRouting { protocol_bps: 5, creator_bps: 5, treasury_bps: 10 }
+        );
     });
 }
 
@@ -1981,10 +2019,18 @@ fn d9_treasury_push_goes_to_vault_and_notes() {
         let fee = amount_in * 3 / 1_000;
         let after_fee = amount_in - fee;
         let expected_out = mul_div_u256(SEED_TOKEN, after_fee, SEED_NATIVE + after_fee);
-        let (protocol, creator, treasury) = (amount_in * 5 / 10_000, amount_in * 5 / 10_000, amount_in * 10 / 10_000);
+        let (protocol, creator, treasury) =
+            (amount_in * 5 / 10_000, amount_in * 5 / 10_000, amount_in * 10 / 10_000);
         assert_eq!(protocol + creator + treasury, fee * 2 / 3);
 
-        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(RuntimeOrigin::signed(BOB), native(), launch(), amount_in, expected_out, BOB));
+        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
+            RuntimeOrigin::signed(BOB),
+            native(),
+            launch(),
+            amount_in,
+            expected_out,
+            BOB
+        ));
 
         // The vault got its slice and was told about it; the other two went to the escrow as before.
         assert_eq!(Balances::free_balance(VAULT), treasury);
@@ -1992,12 +2038,17 @@ fn d9_treasury_push_goes_to_vault_and_notes() {
         assert_eq!(Balances::free_balance(escrow()), protocol + creator);
         assert_eq!(ProtocolFeesUnclaimed::<Test>::get(), protocol);
         assert_eq!(CreatorFeesUnclaimed::<Test>::get(key.clone()), creator);
-        System::assert_has_event(Event::FeesRouted { pool: key.clone(), protocol, creator, treasury }.into());
+        System::assert_has_event(
+            Event::FeesRouted { pool: key.clone(), protocol, creator, treasury }.into(),
+        );
 
         // The pool account holds reserves plus only the pool's own share of the fee.
         let pool = Pools::<Test>::get(key.clone()).unwrap();
         assert_eq!(pool.reserve_a, SEED_NATIVE + after_fee);
-        assert_eq!(Balances::free_balance(pool_account), pool.reserve_a + (fee - protocol - creator - treasury));
+        assert_eq!(
+            Balances::free_balance(pool_account),
+            pool.reserve_a + (fee - protocol - creator - treasury)
+        );
 
         // Native out: the slices come off the gross output and the trader
         // gets the net. Price from the pool account's live balances — the
@@ -2005,11 +2056,20 @@ fn d9_treasury_push_goes_to_vault_and_notes() {
         let tokens_in = 1_000_000 * UNIT;
         let pool_bps = 30 - 20;
         let token_fee = tokens_in * pool_bps / 10_000;
-        let (r_native, r_token) = (Balances::free_balance(pool_account), Assets::balance(LAUNCH_ID, pool_account));
-        let gross = mul_div_u256(r_native, tokens_in - token_fee, r_token + (tokens_in - token_fee));
+        let (r_native, r_token) =
+            (Balances::free_balance(pool_account), Assets::balance(LAUNCH_ID, pool_account));
+        let gross =
+            mul_div_u256(r_native, tokens_in - token_fee, r_token + (tokens_in - token_fee));
         let (p2, c2, t2) = (gross * 5 / 10_000, gross * 5 / 10_000, gross * 10 / 10_000);
         let vtrs_before = Balances::free_balance(BOB);
-        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(RuntimeOrigin::signed(BOB), launch(), native(), tokens_in, gross - p2 - c2 - t2, BOB));
+        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
+            RuntimeOrigin::signed(BOB),
+            launch(),
+            native(),
+            tokens_in,
+            gross - p2 - c2 - t2,
+            BOB
+        ));
         assert_eq!(Balances::free_balance(BOB) - vtrs_before, gross - p2 - c2 - t2);
         assert_eq!(Balances::free_balance(VAULT), treasury + t2);
         assert_eq!(SINK_NOTED.with(|n| n.borrow().len()), 2);
@@ -2026,14 +2086,25 @@ fn d9_no_sink_folds_into_protocol() {
         SINK_VAULT.with(|v| *v.borrow_mut() = None);
         let key = seeded_launch_pool3(5, 5, 10);
         let amount_in = 100 * UNIT;
-        let (protocol, creator, treasury) = (amount_in * 5 / 10_000, amount_in * 5 / 10_000, amount_in * 10 / 10_000);
-        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(RuntimeOrigin::signed(BOB), native(), launch(), amount_in, 0, BOB));
+        let (protocol, creator, treasury) =
+            (amount_in * 5 / 10_000, amount_in * 5 / 10_000, amount_in * 10 / 10_000);
+        assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
+            RuntimeOrigin::signed(BOB),
+            native(),
+            launch(),
+            amount_in,
+            0,
+            BOB
+        ));
         assert_eq!(Balances::free_balance(VAULT), 0);
         assert!(SINK_NOTED.with(|n| n.borrow().is_empty()));
         assert_eq!(ProtocolFeesUnclaimed::<Test>::get(), protocol + treasury);
         assert_eq!(CreatorFeesUnclaimed::<Test>::get(key.clone()), creator);
         assert_eq!(Balances::free_balance(escrow()), protocol + creator + treasury);
-        System::assert_has_event(Event::FeesRouted { pool: key, protocol: protocol + treasury, creator, treasury: 0 }.into());
+        System::assert_has_event(
+            Event::FeesRouted { pool: key, protocol: protocol + treasury, creator, treasury: 0 }
+                .into(),
+        );
     });
 }
 

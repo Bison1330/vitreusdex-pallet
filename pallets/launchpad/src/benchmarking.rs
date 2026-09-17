@@ -84,10 +84,12 @@ fn create<T: Config>(creator: &T::AccountId) -> LaunchId {
 /// Metadata with a `d`-byte description and four `u`-byte URIs — the two
 /// dimensions its storage write varies with.
 fn metadata<T: Config>(d: u32, u: u32) -> LaunchMetadataOf<T> {
-    let uri = |byte: u8| BoundedVec::try_from(sp_std::vec![byte; u as usize]).expect("u ≤ UriLimit");
+    let uri =
+        |byte: u8| BoundedVec::try_from(sp_std::vec![byte; u as usize]).expect("u ≤ UriLimit");
     LaunchMetadata {
         image: uri(b'i'),
-        description: BoundedVec::try_from(sp_std::vec![b'd'; d as usize]).expect("d ≤ DescriptionLimit"),
+        description: BoundedVec::try_from(sp_std::vec![b'd'; d as usize])
+            .expect("d ≤ DescriptionLimit"),
         website: uri(b'w'),
         twitter: uri(b'x'),
         telegram: uri(b't'),
@@ -126,7 +128,9 @@ fn assert_swept<T: Config>(id: LaunchId, before: (BalanceOf<T>, BalanceOf<T>)) {
     let launch = Launches::<T>::get(id).expect("launch");
     let pool = DexOf::<T>::pool_account_for(T::NativeAssetKind::get(), asset_kind::<T>(id));
     let terms = Launchpad::<T>::curve_terms(id).expect("terms");
-    let raise: BalanceOf<T> = curve::raise_at_sellout(&terms, T::Sellable::get().into()).expect("raise").into();
+    let raise: BalanceOf<T> = curve::raise_at_sellout(&terms, T::Sellable::get().into())
+        .expect("raise")
+        .into();
     assert_eq!(T::Currency::balance(&pool), raise, "pool holds the raised VTRS and nothing parked");
     assert_eq!(
         T::LaunchAssets::balance(launch.asset_id, &pool),
@@ -227,8 +231,13 @@ mod benchmarks {
         let id = create::<T>(&creator);
         let caller: T::AccountId = whitelisted_caller();
         fund::<T>(&caller, rich::<T>());
-        Launchpad::<T>::buy(RawOrigin::Signed(caller.clone()).into(), id, small_quote::<T>(), Zero::zero())
-            .expect("buy");
+        Launchpad::<T>::buy(
+            RawOrigin::Signed(caller.clone()).into(),
+            id,
+            small_quote::<T>(),
+            Zero::zero(),
+        )
+        .expect("buy");
         let asset = Launches::<T>::get(id).expect("launch").asset_id;
         let held = T::LaunchAssets::balance(asset, &caller);
         let half = held / 2u32.into();
@@ -273,7 +282,8 @@ mod benchmarks {
         fund::<T>(&caller, rich::<T>());
         let id = create::<T>(&caller);
         let buyer = funded::<T>("buyer");
-        Launchpad::<T>::buy(RawOrigin::Signed(buyer).into(), id, small_quote::<T>(), Zero::zero()).expect("buy");
+        Launchpad::<T>::buy(RawOrigin::Signed(buyer).into(), id, small_quote::<T>(), Zero::zero())
+            .expect("buy");
         let owed = Curves::<T>::get(id).expect("curve").creator_fees_unclaimed;
         assert!(!owed.is_zero());
         let before = T::Currency::balance(&caller);
@@ -287,7 +297,10 @@ mod benchmarks {
     }
 
     #[benchmark]
-    fn set_launch_metadata(d: Linear<0, { T::DescriptionLimit::get() }>, u: Linear<0, { T::UriLimit::get() }>) {
+    fn set_launch_metadata(
+        d: Linear<0, { T::DescriptionLimit::get() }>,
+        u: Linear<0, { T::UriLimit::get() }>,
+    ) {
         let caller: T::AccountId = whitelisted_caller();
         fund::<T>(&caller, rich::<T>());
         let id = create::<T>(&caller);
