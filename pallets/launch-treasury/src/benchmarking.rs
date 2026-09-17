@@ -38,6 +38,9 @@ pub trait BenchmarkHelper<AccountId> {
     /// Whatever the exchange needs before it can quote `LNRG → VTRS` (on
     /// chain the rate is set by the first session change).
     fn prepare_exchange();
+    /// Make `TreasuryExchange::depth()` report at least `native` (on chain:
+    /// fund the broker's account).
+    fn set_exchange_depth(native: u128);
 }
 
 fn target<T: Config>() -> u128 {
@@ -198,19 +201,13 @@ mod benchmarks {
         stake_for::<T>(id);
         mint_lnrg::<T>(lnrg_units::<T>(1_000));
         <T as Config>::BenchmarkHelper::prepare_exchange();
-        // Depth: a tenth of the graduation target, plus the broker's own ED.
         let ed = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<T::AccountId>>::minimum_balance(
             <T as pallet_launchpad::Config>::NativeAssetKind::get(),
         );
+        // Depth: a tenth of the graduation target.
         let depth: BalanceOf<T> = (target::<T>() / 10).into();
-        set_native::<T>(&T::BrokerAccount::get(), depth.saturating_add(ed));
-        let quote = T::Exchange::quote_price_exact_tokens_for_tokens(
-            T::LnrgAsset::get(),
-            <T as pallet_launchpad::Config>::NativeAssetKind::get(),
-            lnrg_units::<T>(1_000),
-            true,
-        )
-        .expect("quote");
+        <T as Config>::BenchmarkHelper::set_exchange_depth(target::<T>() / 10);
+        let quote = T::Exchange::quote(lnrg_units::<T>(1_000)).expect("quote");
         assert!(quote > depth, "the broker must be the binding constraint");
         frame_system::Pallet::<T>::set_block_number(
             frame_system::Pallet::<T>::block_number() + Terms::<T>::get().min_burn_interval,

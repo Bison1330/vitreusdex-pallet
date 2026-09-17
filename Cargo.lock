@@ -7061,7 +7061,6 @@ dependencies = [
  "sp-io",
  "sp-runtime",
  "sp-std",
- "vitreus-runtime-common",
 ]
 
 [[package]]

@@ -68,7 +68,6 @@ use sp_runtime::{
     DispatchError, RuntimeDebug,
 };
 use sp_std::{vec, vec::Vec};
-use vitreus_runtime_common::{QuotePrice, Swap};
 
 pub type LaunchId = pallet_launchpad::LaunchId;
 pub type EraIndex = u32;
@@ -110,6 +109,26 @@ pub trait TreasuryStaking<AccountId, Balance> {
     fn unbond(stash: &AccountId, value: Balance) -> DispatchResult;
     /// `withdraw_unbonded`; returns the amount that left the ledger.
     fn withdraw_unbonded(stash: &AccountId) -> Result<Balance, DispatchError>;
+}
+
+/// The venue the vault sells LNRG on (spec §6.4): the energy broker on
+/// chain, a fixed-rate mock in tests. Shaped like [`TreasuryStaking`] —
+/// pallet-local, so this crate depends on no runtime trait crate, and a
+/// consumer's adapter is a few lines over whatever broker it has. Every
+/// method that moves funds returns the venue's own `DispatchError`
+/// unchanged.
+pub trait TreasuryExchange<AccountId, Balance> {
+    /// VTRS the venue would pay right now for exactly `lnrg`, fee
+    /// included; `None` if it cannot quote.
+    fn quote(lnrg: Balance) -> Option<Balance>;
+    /// VTRS the venue can pay out right now (the broker's own reducible
+    /// balance). A sale is sized under it (§6.4).
+    fn depth() -> Balance;
+    /// Sell exactly `lnrg` from `who` for at least `min_native`, delivered
+    /// to `who`; returns what arrived. The venue takes the input keeping
+    /// `who` alive (R8): a caller must not ask for the account's whole
+    /// balance of the asset.
+    fn sell(who: &AccountId, lnrg: Balance, min_native: Balance) -> Result<Balance, DispatchError>;
 }
 
 /// Operational terms (spec §5.1). Live, except `dormancy_blocks`, which is
@@ -186,12 +205,9 @@ pub mod pallet {
         /// The staking pallet (spec §6.2).
         type Staking: TreasuryStaking<Self::AccountId, BalanceOf<Self>>;
 
-        /// The energy broker: sells LNRG for VTRS at the protocol rate.
-        type Exchange: Swap<Self::AccountId, Balance = BalanceOf<Self>, AssetKind = AssetKindOf<Self>>
-            + QuotePrice<Balance = BalanceOf<Self>, AssetKind = AssetKindOf<Self>>;
-
-        /// The broker's account, whose VTRS balance bounds a sale (§6.4).
-        type BrokerAccount: Get<Self::AccountId>;
+        /// The energy broker: sells the vault's LNRG for VTRS at the
+        /// protocol rate (spec §6.4).
+        type Exchange: TreasuryExchange<Self::AccountId, BalanceOf<Self>>;
 
         /// LNRG as the DEX's asset kind.
         #[pallet::constant]
@@ -653,12 +669,8 @@ pub mod pallet {
 
         /// Largest `x ≤ want` whose VTRS quote the broker can pay.
         fn sellable(want: BalanceOf<T>) -> Option<(BalanceOf<T>, BalanceOf<T>)> {
-            let (lnrg, native) = (T::LnrgAsset::get(), Self::native());
-            let depth = <<T as pallet_vitreus_dex::Config>::Assets as FungiblesInspect<
-                T::AccountId,
-            >>::reducible_balance(
-                native.clone(), &T::BrokerAccount::get(), Preserve, Polite
-            );
+            let lnrg = T::LnrgAsset::get();
+            let depth = T::Exchange::depth();
             // R8: the broker takes the input with `keep_alive`, so the vault
             // can part with its reducible LNRG and no more — balance minus
             // the asset's min balance. A claim that equals the whole balance
@@ -673,14 +685,7 @@ pub mod pallet {
             if depth.is_zero() || want.is_zero() {
                 return None;
             }
-            let quote = |x: BalanceOf<T>| {
-                T::Exchange::quote_price_exact_tokens_for_tokens(
-                    lnrg.clone(),
-                    native.clone(),
-                    x,
-                    true,
-                )
-            };
+            let quote = T::Exchange::quote;
             let mut x = want;
             let mut q = quote(x)?;
             // The broker's rate is linear, so one proportional step lands
@@ -714,14 +719,7 @@ pub mod pallet {
                 (BalanceOf::<T>::zero(), BalanceOf::<T>::zero(), BalanceOf::<T>::zero());
             if let Some((x, q)) = Self::sellable(t.lnrg_accrued) {
                 let min_out = q.saturating_sub(q / 1_000u32.into());
-                let out = T::Exchange::swap_exact_tokens_for_tokens(
-                    vault.clone(),
-                    vec![T::LnrgAsset::get(), Self::native()],
-                    x,
-                    Some(min_out),
-                    vault.clone(),
-                    true,
-                )?;
+                let out = T::Exchange::sell(&vault, x, min_out)?;
                 t.lnrg_accrued = t.lnrg_accrued.saturating_sub(x);
                 // What left the vault was attributed LNRG: the accumulator's
                 // baseline follows it down, so the next rewards are `balance −

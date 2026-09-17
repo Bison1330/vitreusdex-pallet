@@ -151,7 +151,6 @@ parameter_types! {
     pub LnrgAsset: NativeOrAssetId = NativeOrAssetId::WithId(LNRG_ID);
     pub const ExcessRecipient: Acc = EXCESS;
     pub const TreasuryAccount: Acc = TREASURY;
-    pub const BrokerAccount: Acc = BROKER;
 }
 
 pub struct ReservedAssets;
@@ -529,98 +528,55 @@ impl MockBroker {
         RATE.with(|r| *r.borrow_mut() = (num, den));
     }
 }
-impl QuotePrice for MockBroker {
-    type Balance = u128;
-    type AssetKind = NativeOrAssetId;
-    fn quote_price_tokens_for_exact_tokens(
-        _: NativeOrAssetId,
-        _: NativeOrAssetId,
-        _: u128,
-        _: bool,
-    ) -> Option<u128> {
-        None
+impl TreasuryExchange<Acc, u128> for MockBroker {
+    fn quote(lnrg: u128) -> Option<u128> {
+        Some(Self::out_for(lnrg))
     }
-    fn quote_price_exact_tokens_for_tokens(
-        a1: NativeOrAssetId,
-        a2: NativeOrAssetId,
-        amount: u128,
-        _: bool,
-    ) -> Option<u128> {
-        (a1 == NativeOrAssetId::WithId(LNRG_ID) && a2 == NativeOrAssetId::Native)
-            .then(|| Self::out_for(amount))
+    fn depth() -> u128 {
+        Balances::free_balance(BROKER).saturating_sub(ED)
     }
-}
-impl Swap<Acc> for MockBroker {
-    type Balance = u128;
-    type AssetKind = NativeOrAssetId;
-    fn max_path_len() -> u32 {
-        2
-    }
-    fn swap_exact_tokens_for_tokens(
-        sender: Acc,
-        path: Vec<NativeOrAssetId>,
-        amount_in: u128,
-        amount_out_min: Option<u128>,
-        send_to: Acc,
-        keep_alive: bool,
-    ) -> Result<u128, DispatchError> {
-        if path != vec![NativeOrAssetId::WithId(LNRG_ID), NativeOrAssetId::Native] {
-            return Err(err("InvalidPath"));
-        }
-        // The real broker (energy-broker `do_swap`): with `keep_alive` the
+    fn sell(who: &Acc, lnrg: u128, min_native: u128) -> Result<u128, DispatchError> {
+        // The real broker (energy-broker `do_swap` with `keep_alive`): the
         // sender's reducible balance under `Preserve` must cover the input,
-        // and for a pallet-assets asset that is balance − min_balance. Selling
-        // an account's whole LNRG is `NotExpendable` (R8, seen live on 222).
-        if keep_alive {
-            let reducible =
-                <Assets as frame_support::traits::fungibles::Inspect<Acc>>::reducible_balance(
-                    LNRG_ID,
-                    &sender,
-                    Preservation::Preserve,
-                    Fortitude::Polite,
-                );
-            if reducible < amount_in {
-                return Err(sp_runtime::TokenError::NotExpendable.into());
-            }
+        // and for a pallet-assets asset that is balance − min_balance.
+        // Selling an account's whole LNRG is `NotExpendable` (R8, seen live
+        // on 222).
+        let reducible =
+            <Assets as frame_support::traits::fungibles::Inspect<Acc>>::reducible_balance(
+                LNRG_ID,
+                who,
+                Preservation::Preserve,
+                Fortitude::Polite,
+            );
+        if reducible < lnrg {
+            return Err(sp_runtime::TokenError::NotExpendable.into());
         }
-        let out = Self::out_for(amount_in);
+        let out = Self::out_for(lnrg);
         if out == 0 {
             return Err(err("ZeroAmount"));
         }
-        if let Some(min) = amount_out_min {
-            if out < min {
-                return Err(err("ProvidedMinimumNotSufficientForSwap"));
-            }
+        if out < min_native {
+            return Err(err("ProvidedMinimumNotSufficientForSwap"));
         }
-        if Balances::free_balance(BROKER).saturating_sub(ED) < out {
+        if Self::depth() < out {
             return Err(err("InsufficientLiquidity"));
         }
         // LNRG sold is burned (the real converter drops the credit); VTRS comes from the broker.
         Assets::burn_from(
             LNRG_ID,
-            &sender,
-            amount_in,
-            if keep_alive { Preservation::Preserve } else { Preservation::Expendable },
+            who,
+            lnrg,
+            Preservation::Preserve,
             Precision::Exact,
             Fortitude::Polite,
         )?;
         <Balances as frame_support::traits::fungible::Mutate<Acc>>::transfer(
             &BROKER,
-            &send_to,
+            who,
             out,
             Preservation::Preserve,
         )?;
         Ok(out)
-    }
-    fn swap_tokens_for_exact_tokens(
-        _: Acc,
-        _: Vec<NativeOrAssetId>,
-        _: u128,
-        _: Option<u128>,
-        _: Acc,
-        _: bool,
-    ) -> Result<u128, DispatchError> {
-        Err(err("unsupported"))
     }
 }
 
@@ -642,7 +598,6 @@ impl pallet_launch_treasury::Config for Test {
     type TreasuryManageOrigin = EnsureRoot<Acc>;
     type Staking = MockStaking;
     type Exchange = MockBroker;
-    type BrokerAccount = BrokerAccount;
     type LnrgAsset = LnrgAsset;
     type AssetIdOf = AssetIdOfKind;
     type PalletId = TreasuryPalletId;
@@ -670,6 +625,12 @@ impl pallet_launch_treasury::BenchmarkHelper<Acc> for MockBenchmarkHelper {
         MockStaking::set_era(era);
     }
     fn prepare_exchange() {}
+    fn set_exchange_depth(native: u128) {
+        <Balances as frame_support::traits::fungible::Mutate<Acc>>::set_balance(
+            &BROKER,
+            native + ED,
+        );
+    }
 }
 
 pub const RICH: u128 = 1_000_000_000 * UNIT;

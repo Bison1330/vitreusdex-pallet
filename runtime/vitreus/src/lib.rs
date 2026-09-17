@@ -1395,12 +1395,11 @@ pub mod testnet_pallets {
     // as `Signed(vault)` (spec §3.3: the pallet has no in-runtime staking
     // trait) and sells LNRG through the energy broker's `Swap`.
 
-    use pallet_launch_treasury::{TreasuryStaking, TreasuryTerms};
+    use pallet_launch_treasury::{TreasuryExchange, TreasuryStaking, TreasuryTerms};
 
     parameter_types! {
         pub const LaunchTreasuryPalletId: PalletId = PalletId(*b"vtrs/lpt");
         pub LnrgAssetKind: NativeOrAssetId = NativeOrAssetId::WithId(LNRG::get());
-        pub EnergyBrokerAccount: AccountId = EnergyBroker::account_id();
         /// Spec §5.1 defaults. `dormancy_blocks` is snapshotted per treasury.
         pub LaunchTreasuryDefaultTerms: TreasuryTerms<Balance, BlockNumber> = TreasuryTerms {
             dormancy_blocks: 90 * DAYS,
@@ -1502,12 +1501,47 @@ pub mod testnet_pallets {
         }
     }
 
+    /// The energy broker for the vault: an LNRG → VTRS quote and sale at
+    /// the protocol rate, and the broker's own VTRS as the depth a sale is
+    /// sized under (spec §6.4). The broker sells with `keep_alive` (R8).
+    pub struct EnergyBrokerExchange;
+    impl TreasuryExchange<AccountId, Balance> for EnergyBrokerExchange {
+        fn quote(lnrg: Balance) -> Option<Balance> {
+            <EnergyBroker as QuotePrice>::quote_price_exact_tokens_for_tokens(
+                LnrgAssetKind::get(),
+                NativeOrAssetId::Native,
+                lnrg,
+                true,
+            )
+        }
+        fn depth() -> Balance {
+            use frame_support::traits::{
+                fungible::Inspect as _,
+                tokens::{Fortitude::Polite, Preservation::Preserve},
+            };
+            Balances::reducible_balance(&EnergyBroker::account_id(), Preserve, Polite)
+        }
+        fn sell(
+            who: &AccountId,
+            lnrg: Balance,
+            min_native: Balance,
+        ) -> Result<Balance, DispatchError> {
+            <EnergyBroker as vitreus_runtime_common::Swap<AccountId>>::swap_exact_tokens_for_tokens(
+                who.clone(),
+                vec![LnrgAssetKind::get(), NativeOrAssetId::Native],
+                lnrg,
+                Some(min_native),
+                who.clone(),
+                true,
+            )
+        }
+    }
+
     impl pallet_launch_treasury::Config for Runtime {
         type RuntimeEvent = RuntimeEvent;
         type TreasuryManageOrigin = EnsureRoot<AccountId>;
         type Staking = EnergyGenerationStaking;
-        type Exchange = EnergyBroker;
-        type BrokerAccount = EnergyBrokerAccount;
+        type Exchange = EnergyBrokerExchange;
         type LnrgAsset = LnrgAssetKind;
         type AssetIdOf = AssetIdOfKind;
         type PalletId = LaunchTreasuryPalletId;
@@ -1587,6 +1621,13 @@ pub mod testnet_pallets {
             assert!(
                 DynamicEnergy::exchange_rate().is_some(),
                 "benchmark genesis yields an LNRG rate"
+            );
+        }
+        fn set_exchange_depth(native: Balance) {
+            use frame_support::traits::fungible::Mutate as _;
+            Balances::set_balance(
+                &EnergyBroker::account_id(),
+                native.saturating_add(ExistentialDeposit::get()),
             );
         }
     }
