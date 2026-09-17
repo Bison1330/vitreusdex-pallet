@@ -1356,13 +1356,20 @@ pub mod pallet {
 
             // Strict-replace overbidding. Decrement the displaced solver's
             // active_commitments; missing lookup is treated as no-op since
-            // the new commit is still valid.
+            // the new commit is still valid. A solver raising its own bid
+            // displaces itself: the count must not move, and the record
+            // written below must be the one the decrement touched — R6 was
+            // this very record, loaded above, written back stale plus one,
+            // which locked the bond behind a count that never reached zero.
+            let mut self_replaced = false;
             if let Some(prior) = FillCommitments::<T>::get(intent_id) {
                 ensure!(
                     committed_amount_out > prior.committed_amount_out,
                     Error::<T>::BidNotBetter,
                 );
-                if let Some(mut displaced) = Solvers::<T>::get(prior.solver_id) {
+                if prior.solver_id == solver_id {
+                    self_replaced = true;
+                } else if let Some(mut displaced) = Solvers::<T>::get(prior.solver_id) {
                     displaced.active_commitments =
                         displaced.active_commitments.saturating_sub(1);
                     Solvers::<T>::insert(prior.solver_id, displaced);
@@ -1380,8 +1387,10 @@ pub mod pallet {
             };
             FillCommitments::<T>::insert(intent_id, commitment);
 
-            solver.active_commitments = solver.active_commitments.saturating_add(1);
-            Solvers::<T>::insert(solver_id, solver);
+            if !self_replaced {
+                solver.active_commitments = solver.active_commitments.saturating_add(1);
+                Solvers::<T>::insert(solver_id, solver);
+            }
 
             intent.status = crate::settlement::IntentStatus::Committed;
             Intents::<T>::insert(intent_id, intent);
