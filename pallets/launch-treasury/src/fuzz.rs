@@ -642,26 +642,12 @@ fn expected(op: &Op, e: &DispatchError) -> bool {
     use pallet_launchpad::Error as L;
     use pallet_vitreus_dex::Error as D;
     use Error as T;
-    // SECURITY_AUDIT Finding 14 (open): a routed fee slice below ED cannot
-    // create its recipient — the vault (from genesis, before the first fee
-    // ≥ ED) or the DEX's fee escrow (never funded here) — and the trade that
-    // routes it fails in full. The fuzzer found both legs in its first 200
-    // cases; they are allowed here, by name, until F14 is fixed. Delete this
-    // when it is.
-    let f14 = matches!(e, DispatchError::Token(TokenError::BelowMinimum))
-        && (!System::account_exists(&vault())
-            || !System::account_exists(&VitreusDex::fee_escrow_account()))
-        && matches!(
-            op,
-            Op::CreateLaunch { .. }
-                | Op::Buy { .. }
-                | Op::Sell { .. }
-                | Op::PoolSwap { .. }
-                | Op::Compound { .. }
-        );
-    if f14 {
-        return true;
-    }
+    // SECURITY_AUDIT Finding 14 is fixed: a routed fee slice below ED whose
+    // recipient does not exist yet is left in the pool (DEX) or folded into the
+    // protocol share (curve) instead of failing the trade, so `BelowMinimum` is
+    // no longer an expected outcome of a fee-routing leg. The allowlist entry
+    // that accepted it "by name" is gone; if it recurs the fuzzer fails, which
+    // is the check this leaves behind.
     // What pallet-balances says when the payer cannot pay: short of funds,
     // or exactly at ED with a Preserve transfer.
     let funds = matches!(

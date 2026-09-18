@@ -1046,6 +1046,22 @@ pub mod pallet {
         ) -> Result<(BalanceOf<T>, BalanceOf<T>), DispatchError> {
             let asset = T::IntoAssetKind::convert(launch.asset_id);
             let sink = if treasury > 0 { T::CurveTreasurySink::account_for(&asset) } else { None };
+            // Finding 14 (SECURITY_AUDIT): a sub-ED treasury slice cannot create
+            // the vault before it is funded, and the transfer below would fail the
+            // whole buy with `Token(BelowMinimum)`. Fold such a slice into the
+            // protocol share — the same redirection the retired-treasury case
+            // (`account_for == None`) already does. So, as on the DEX side, a
+            // treasury total (`treasury_fees_paid`) does NOT count a sub-ED slice
+            // taken before the vault existed; the window closes at the vault's
+            // first ≥ED credit (LAUNCH_TREASURY_SPEC §9.6).
+            let ed = <T::Currency as FungibleInspect<T::AccountId>>::minimum_balance();
+            let treasury_bal: BalanceOf<T> = treasury.into();
+            let sink = match sink {
+                Some(v) if treasury_bal >= ed || frame_system::Pallet::<T>::account_exists(&v) => {
+                    Some(v)
+                },
+                _ => None,
+            };
             let (protocol, treasury) = match sink {
                 Some(_) => (protocol, treasury),
                 None => (protocol + treasury, 0),

@@ -1417,6 +1417,34 @@ fn r9_a_swap_of_ones_whole_balance_keeps_the_ed_instead_of_failing() {
     });
 }
 
+/// vitreus-dex SECURITY_AUDIT Finding 14 — a routed fee slice below ED could
+/// not create its recipient (the DEX fee escrow, never funded), so a swap whose
+/// protocol+creator slice was under ED failed in full with `Token(BelowMinimum)`
+/// — a token error the caller cannot read as "smaller than the fee floor". The
+/// fix leaves a sub-ED slice in the pool (it accrues to LPs) rather than failing.
+#[test]
+fn finding14_a_sub_ed_routed_slice_does_not_fail_the_swap() {
+    new_test_ext().execute_with(|| {
+        let a = graduated_with_volume(ALICE, 0);
+        // The DEX fee escrow has never received a fee, so it does not exist.
+        assert!(!System::account_exists(&VitreusDex::fee_escrow_account()));
+        let dave: Acc = acc(30);
+        assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave, 10 * UNIT));
+        // 9×10^14 wei native in: protocol+creator = 10 bps = 9×10^11 < ED (10^12).
+        let small = 900_000_000_000_000u128;
+        let r = VitreusDex::swap_exact_tokens_for_tokens(
+            origin(dave),
+            NativeOrAssetId::Native,
+            kind(a),
+            small,
+            0,
+            dave,
+        );
+        assert!(r.is_ok(), "a sub-ED routed slice must not fail the swap: {:?}", r);
+        assert!(tok(a, dave) > 0, "and the buyer got tokens");
+    });
+}
+
 /// R11 — R9 over-reached: `Preserve` was applied to the input whatever the
 /// asset, and pallet-assets reads `Preserve` as "keep the minimum balance",
 /// so a holder selling their whole token position was refused with
