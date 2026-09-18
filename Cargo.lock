@@ -7057,6 +7057,8 @@ dependencies = [
  "primitive-types",
  "proptest",
  "scale-info",
+ "serde",
+ "serde_json",
  "sp-core",
  "sp-io",
  "sp-runtime",

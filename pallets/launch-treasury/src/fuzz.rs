@@ -106,7 +106,25 @@ fn reward() -> impl Strategy<Value = u128> {
 
 // ---- ops -------------------------------------------------------------------
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// serde helper: a `u128`/`u64` field as a decimal string, so JSON never
+/// rounds it (JSON numbers are f64).
+mod num_str {
+    use core::{fmt::Display, str::FromStr};
+    pub fn serialize<T: Display, S: serde::Serializer>(v: &T, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&v.to_string())
+    }
+    pub fn deserialize<'de, T, D>(d: D) -> Result<T, D::Error>
+    where
+        T: FromStr,
+        T::Err: Display,
+        D: serde::Deserializer<'de>,
+    {
+        let s = <std::string::String as serde::Deserialize>::deserialize(d)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Where {
     Vault,
     Escrow,
@@ -114,40 +132,120 @@ pub enum Where {
     Broker,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum What {
     Vtrs,
     Lnrg,
     Token,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+/// The op set is the schema the phase-two replay corpus is written in
+/// (`serde` → JSON); `u128`/`u64` fields serialise as decimal strings so a
+/// JSON number never loses precision. Keep this enum and the driver's
+/// `Op` type in step.
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "op")]
 pub enum Op {
-    CreateLaunch { creator: u8, initial_buy: u128 },
-    Buy { who: u8, launch: u8, q: u128 },
-    Sell { who: u8, launch: u8, frac_bps: u16 },
-    ClaimCreatorFees { launch: u8 },
-    Graduate { launch: u8 },
-    PoolSwap { who: u8, launch: u8, buy: bool, amount: u128 },
-    AddLiquidity { who: u8, launch: u8, vtrs: u128 },
-    RemoveLiquidity { who: u8, launch: u8, frac_bps: u16 },
-    Stake { launch: u8 },
+    CreateLaunch {
+        creator: u8,
+        #[serde(with = "num_str")]
+        initial_buy: u128,
+    },
+    Buy {
+        who: u8,
+        launch: u8,
+        #[serde(with = "num_str")]
+        q: u128,
+    },
+    Sell {
+        who: u8,
+        launch: u8,
+        frac_bps: u16,
+    },
+    ClaimCreatorFees {
+        launch: u8,
+    },
+    Graduate {
+        launch: u8,
+    },
+    PoolSwap {
+        who: u8,
+        launch: u8,
+        buy: bool,
+        #[serde(with = "num_str")]
+        amount: u128,
+    },
+    AddLiquidity {
+        who: u8,
+        launch: u8,
+        #[serde(with = "num_str")]
+        vtrs: u128,
+    },
+    RemoveLiquidity {
+        who: u8,
+        launch: u8,
+        frac_bps: u16,
+    },
+    Stake {
+        launch: u8,
+    },
     Retarget,
     Harvest,
-    Compound { who: u8, launch: u8 },
-    Retire { launch: u8 },
-    Finalize { launch: u8 },
-    SetTerms { impact: u16, bounty: u16, min_stake: u128, interval: u64, dormancy: u64 },
-    SetTargets { mask: u8 },
-    PayRewards { lnrg: u128 },
-    Slash { bps: u16 },
-    SetCooperable { validator: u8, ok: bool },
-    SetReputation { ok: bool },
-    FundBroker { vtrs: u128 },
+    Compound {
+        who: u8,
+        launch: u8,
+    },
+    Retire {
+        launch: u8,
+    },
+    Finalize {
+        launch: u8,
+    },
+    SetTerms {
+        impact: u16,
+        bounty: u16,
+        #[serde(with = "num_str")]
+        min_stake: u128,
+        #[serde(with = "num_str")]
+        interval: u64,
+        #[serde(with = "num_str")]
+        dormancy: u64,
+    },
+    SetTargets {
+        mask: u8,
+    },
+    PayRewards {
+        #[serde(with = "num_str")]
+        lnrg: u128,
+    },
+    Slash {
+        bps: u16,
+    },
+    SetCooperable {
+        validator: u8,
+        ok: bool,
+    },
+    SetReputation {
+        ok: bool,
+    },
+    FundBroker {
+        #[serde(with = "num_str")]
+        vtrs: u128,
+    },
     DrainBroker,
-    Donate { to: Where, what: What, launch: u8, amount: u128 },
-    AdvanceBlocks { n: u32 },
-    AdvanceEras { n: u8 },
+    Donate {
+        to: Where,
+        what: What,
+        launch: u8,
+        #[serde(with = "num_str")]
+        amount: u128,
+    },
+    AdvanceBlocks {
+        n: u32,
+    },
+    AdvanceEras {
+        n: u8,
+    },
 }
 
 fn op() -> impl Strategy<Value = Op> {
@@ -979,6 +1077,109 @@ fn run_sequence(ops: &[Op]) -> Result<(), String> {
 
 fn cases() -> u32 {
     std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(32)
+}
+
+/// Writes the phase-two replay corpus to the path in `FUZZ_DUMP` as JSON:
+/// named sequences, hand-built to exercise each leg the chain has and the
+/// counterpart pallets the mocks stand in for (the R8 broker `keep_alive`
+/// path, real `payout_stakers`, the fee layer moving the broker's depth),
+/// plus the situations the review's findings lived in (R2 dormancy, R8/R11
+/// whole-position sale, F14 from genesis). The Op enum is the schema; the
+/// driver in `scripts/pallet-fuzz-replay` reads exactly this. Not the
+/// proptest RNG seeds — those are seeds, not op lists — but the same cases,
+/// written out. Run: `FUZZ_DUMP=/path/corpus.json cargo test -p
+/// pallet-launch-treasury --lib dump_corpus -- --ignored`.
+#[test]
+#[ignore]
+fn dump_corpus() {
+    use Op::*;
+    let seqs: Vec<(&str, Vec<Op>)> = vec![
+        (
+            "curve-trade-and-fees",
+            vec![
+                CreateLaunch { creator: 0, initial_buy: 100 * UNIT },
+                Buy { who: 1, launch: 0, q: 500 * UNIT },
+                Sell { who: 1, launch: 0, frac_bps: 5000 },
+                Buy { who: 2, launch: 0, q: 300 * UNIT },
+                ClaimCreatorFees { launch: 0 },
+            ],
+        ),
+        (
+            "graduate-then-pool",
+            vec![
+                CreateLaunch { creator: 0, initial_buy: 0 },
+                Buy { who: 1, launch: 0, q: 100_000 * UNIT },
+                Graduate { launch: 0 },
+                PoolSwap { who: 2, launch: 0, buy: true, amount: 50 * UNIT },
+                PoolSwap { who: 2, launch: 0, buy: false, amount: 10_000 * UNIT },
+                AddLiquidity { who: 1, launch: 0, vtrs: 20 * UNIT },
+                RemoveLiquidity { who: 1, launch: 0, frac_bps: 10000 },
+            ],
+        ),
+        // The harvest/compound leg: needs a real era boundary and payout on
+        // the fork. This is the sequence the spike proved pays the vault.
+        (
+            "stake-earn-compound",
+            vec![
+                CreateLaunch { creator: 0, initial_buy: 0 },
+                Buy { who: 1, launch: 0, q: 100_000 * UNIT },
+                Graduate { launch: 0 },
+                SetTargets { mask: 0b001 },
+                Stake { launch: 0 },
+                PayRewards { lnrg: 0 }, // driver: advance one era + payout_stakers
+                Harvest,
+                FundBroker { vtrs: 1_000 * UNIT },
+                Compound { who: 3, launch: 0 },
+            ],
+        ),
+        // R11 / R8: sell a whole pool position; sell the whole LNRG to the broker.
+        (
+            "whole-position-sale",
+            vec![
+                CreateLaunch { creator: 0, initial_buy: 0 },
+                Buy { who: 1, launch: 0, q: 100_000 * UNIT },
+                Graduate { launch: 0 },
+                PoolSwap { who: 2, launch: 0, buy: true, amount: 10 * UNIT },
+                PoolSwap { who: 2, launch: 0, buy: false, amount: u128::MAX }, // driver clamps to holding
+            ],
+        ),
+        // R2: the treasury's own buyback must not reset the dormancy clock.
+        (
+            "dormancy-and-retire",
+            vec![
+                CreateLaunch { creator: 0, initial_buy: 0 },
+                Buy { who: 1, launch: 0, q: 100_000 * UNIT },
+                Graduate { launch: 0 },
+                SetTargets { mask: 0b001 },
+                Stake { launch: 0 },
+                PayRewards { lnrg: 0 },
+                FundBroker { vtrs: 1_000 * UNIT },
+                Compound { who: 3, launch: 0 },
+                AdvanceBlocks { n: 200 },
+                SetTerms { impact: 50, bounty: 50, min_stake: UNIT, interval: 10, dormancy: 100 },
+                Retire { launch: 0 },
+                AdvanceEras { n: 8 },
+                Finalize { launch: 0 },
+            ],
+        ),
+        // The fee layer: a caller with no VNRG buys it through the broker.
+        (
+            "fee-starved-caller",
+            vec![
+                CreateLaunch { creator: 2, initial_buy: 50 * UNIT },
+                Buy { who: 3, launch: 0, q: 20 * UNIT },
+                PoolSwap { who: 3, launch: 0, buy: true, amount: UNIT },
+            ],
+        ),
+    ];
+    let json: Vec<_> = seqs
+        .iter()
+        .map(|(name, ops)| serde_json::json!({ "name": name, "ops": ops }))
+        .collect();
+    let out = serde_json::to_string_pretty(&json).unwrap();
+    let path = std::env::var("FUZZ_DUMP").unwrap_or_else(|_| "corpus.json".into());
+    std::fs::write(&path, out).unwrap();
+    eprintln!("wrote {} sequences to {path}", seqs.len());
 }
 
 /// The fee layer does what the chain does: a caller without VNRG buys it
