@@ -1379,7 +1379,7 @@ fn r9_a_swap_of_ones_whole_balance_keeps_the_ed_instead_of_failing() {
     new_test_ext().execute_with(|| {
         let a = graduated_with_volume(ALICE, 1);
         // Dave has exactly 5 VTRS and no tokens.
-        let dave: Acc = sp_runtime::AccountId32::new([4u8; 32]);
+        let dave: Acc = acc(4);
         assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave.clone(), 5 * UNIT));
         // Everything above the ED: goes through, the account lives, the tokens arrive.
         let r = VitreusDex::swap_exact_tokens_for_tokens(
@@ -1427,7 +1427,7 @@ fn r9_a_swap_of_ones_whole_balance_keeps_the_ed_instead_of_failing() {
 fn r11_selling_ones_whole_token_position_goes_through() {
     new_test_ext().execute_with(|| {
         let a = graduated_with_volume(ALICE, 0);
-        let dave: Acc = sp_runtime::AccountId32::new([6u8; 32]);
+        let dave: Acc = acc(6);
         assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave.clone(), 20 * UNIT));
         assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
             origin(&dave),
@@ -1466,7 +1466,7 @@ fn r10_a_swap_that_would_deliver_nothing_says_so() {
         // Drain the pool's token side: a buy of 774,000 VTRS leaves under a
         // millionth of the tokens, so 1 wei buys 0.99 of a unit.
         pool_buy(ALICE, a, 774_000 * UNIT);
-        let dave: Acc = sp_runtime::AccountId32::new([5u8; 32]);
+        let dave: Acc = acc(5);
         assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave.clone(), UNIT));
         let r = VitreusDex::swap_exact_tokens_for_tokens(
             origin(&dave),

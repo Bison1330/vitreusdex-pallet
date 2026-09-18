@@ -36,7 +36,7 @@ use frame_support::{
 };
 use frame_system::{EnsureRoot, EnsureSigned};
 use pallet_launchpad::{LaunchParams, OnCurveBuy};
-use sp_runtime::{traits::IdentityLookup, AccountId32, BuildStorage};
+use sp_runtime::{traits::IdentityLookup, BuildStorage};
 use std::{cell::RefCell, collections::BTreeMap};
 
 type Block = frame_system::mocking::MockBlock<Test>;
@@ -44,17 +44,25 @@ type Block = frame_system::mocking::MockBlock<Test>;
 pub const UNIT: u128 = 1_000_000_000_000_000_000;
 pub const ED: u128 = 1_000_000_000_000; // 10^-6 VTRS
 
-pub type Acc = AccountId32;
-pub const ALICE: Acc = AccountId32::new([1u8; 32]);
-pub const BOB: Acc = AccountId32::new([2u8; 32]);
-pub const CHARLIE: Acc = AccountId32::new([3u8; 32]);
-pub const KEEPER: Acc = AccountId32::new([7u8; 32]);
-pub const TREASURY: Acc = AccountId32::new([99u8; 32]);
-pub const EXCESS: Acc = AccountId32::new([98u8; 32]);
-pub const BROKER: Acc = AccountId32::new([97u8; 32]);
-pub const VAL_A: Acc = AccountId32::new([0xA0u8; 32]);
-pub const VAL_B: Acc = AccountId32::new([0xB0u8; 32]);
-pub const VAL_C: Acc = AccountId32::new([0xC0u8; 32]);
+/// Twenty bytes, as on the chain (`fp_account::AccountId20`): every
+/// `PalletId`-derived account is truncated to twenty bytes here as it is
+/// there, so a derivation that only collides at that width (D8) collides
+/// in these tests too. `sp_core::H160` is the same twenty bytes without
+/// frontier in the dev-dependencies.
+pub type Acc = sp_core::H160;
+pub const fn acc(b: u8) -> Acc {
+    sp_core::H160([b; 20])
+}
+pub const ALICE: Acc = acc(1);
+pub const BOB: Acc = acc(2);
+pub const CHARLIE: Acc = acc(3);
+pub const KEEPER: Acc = acc(7);
+pub const TREASURY: Acc = acc(99);
+pub const EXCESS: Acc = acc(98);
+pub const BROKER: Acc = acc(97);
+pub const VAL_A: Acc = acc(0xA0);
+pub const VAL_B: Acc = acc(0xB0);
+pub const VAL_C: Acc = acc(0xC0);
 
 pub const VNRG_ID: u128 = 0;
 pub const LNRG_ID: u128 = 2;

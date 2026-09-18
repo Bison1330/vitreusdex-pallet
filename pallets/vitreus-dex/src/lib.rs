@@ -2556,7 +2556,7 @@ pub mod pallet {
         /// Derive the shared escrow account holding all pending intent
         /// `token_in` balances. Per-intent accounting lives in the `Intents`
         /// storage map.
-        pub(crate) fn intent_escrow_account() -> T::AccountId {
+        pub fn intent_escrow_account() -> T::AccountId {
             PALLET_ID.into_sub_account_truncating(b"intents")
         }
 

@@ -633,8 +633,45 @@ fn named_accounts() -> Vec<Acc> {
     v
 }
 
+/// Every `PalletId`-derived account — the vault, the DEX's two escrows,
+/// each launch's escrow, each pool's account — is distinct from every
+/// other and from every user, at the chain's twenty-byte width. D8 was two
+/// pools sharing one account at that width; a derivation that truncates
+/// into another's bytes is the same bug. Only launches that exist are
+/// checked: `pool_account` for an absent launch derives from an absent
+/// asset and `escrow_of` returns a placeholder.
+fn derived_accounts_distinct() -> Result<(), String> {
+    let mut v: Vec<(String, Acc)> = vec![
+        ("vault".into(), vault()),
+        ("dex fee escrow".into(), VitreusDex::fee_escrow_account()),
+        ("dex intent escrow".into(), VitreusDex::intent_escrow_account()),
+        ("broker".into(), BROKER),
+        ("treasury".into(), TREASURY),
+        ("excess".into(), EXCESS),
+    ];
+    v.extend(USERS.iter().enumerate().map(|(i, a)| (format!("user {i}"), *a)));
+    for id in 0..NextLaunchId::<Test>::get() {
+        if let Some(l) = Launches::<Test>::get(id) {
+            v.push((format!("launch {id} escrow"), l.escrow));
+        }
+        v.push((format!("launch {id} pool"), pool_account(id)));
+    }
+    for i in 0..v.len() {
+        for j in (i + 1)..v.len() {
+            if v[i].1 == v[j].1 {
+                return Err(format!(
+                    "{} and {} derive the same account {:?}",
+                    v[i].0, v[j].0, v[i].1
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Every invariant, after every op. Returns the first one that fails.
 fn check_all(op: &Op, before: &Before) -> Result<(), String> {
+    derived_accounts_distinct()?;
     // The treasury's own.
     LaunchTreasury::do_try_state().map_err(|e| format!("treasury try_state: {e:?}"))?;
 
