@@ -13,7 +13,7 @@ use std::borrow::Borrow;
 // ---- helpers ---------------------------------------------------------------
 
 fn origin(who: impl Borrow<Acc>) -> RuntimeOrigin {
-    RuntimeOrigin::signed(who.borrow().clone())
+    RuntimeOrigin::signed(*who.borrow())
 }
 fn bv(s: &[u8]) -> frame_support::BoundedVec<u8, frame_support::traits::ConstU32<50>> {
     s.to_vec().try_into().unwrap()
@@ -59,9 +59,9 @@ fn cross(who: impl Borrow<Acc>, id: LaunchId) {
     assert_eq!(Curves::<Test>::get(id).unwrap().phase, Phase::Graduated);
 }
 fn pool_buy(who: impl Borrow<Acc>, id: LaunchId, vtrs_in: u128) {
-    let who = who.borrow().clone();
+    let who = *who.borrow();
     assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
-        origin(&who),
+        origin(who),
         NativeOrAssetId::Native,
         kind(id),
         vtrs_in,
@@ -731,7 +731,7 @@ fn fm_t3_retarget_filters_chilled_and_noncollab() {
         let a = graduated_with_volume(ALICE, 10);
         assert_ok!(stake(a));
         let submitted = COOPERATE_CALLS.with(|c| c.borrow().last().cloned()).unwrap();
-        let names: Vec<Acc> = submitted.iter().map(|(v, _)| v.clone()).collect();
+        let names: Vec<Acc> = submitted.iter().map(|(v, _)| *v).collect();
         assert_eq!(names, vec![VAL_A, VAL_B], "C is not cooperable and was left out, not failed on");
         assert_eq!(submitted.iter().map(|(_, s)| s).sum::<u128>(), active());
         assert_eq!(cooperated(), active());
@@ -1380,28 +1380,28 @@ fn r9_a_swap_of_ones_whole_balance_keeps_the_ed_instead_of_failing() {
         let a = graduated_with_volume(ALICE, 1);
         // Dave has exactly 5 VTRS and no tokens.
         let dave: Acc = acc(4);
-        assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave.clone(), 5 * UNIT));
+        assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave, 5 * UNIT));
         // Everything above the ED: goes through, the account lives, the tokens arrive.
         let r = VitreusDex::swap_exact_tokens_for_tokens(
-            origin(&dave),
+            origin(dave),
             NativeOrAssetId::Native,
             kind(a),
             5 * UNIT - ED,
             0,
-            dave.clone(),
+            dave,
         );
         assert!(r.is_ok(), "a swap of everything above the ED: {:?}", r);
-        assert_eq!(vtrs(&dave), ED, "the ED stays");
-        assert!(tok(a, &dave) > 0, "and the tokens arrived");
+        assert_eq!(vtrs(dave), ED, "the ED stays");
+        assert!(tok(a, dave) > 0, "and the tokens arrived");
         // The ED itself: refused up front with the same answer the curve gives,
         // not `CannotCreate` after the account has died.
         let r = VitreusDex::swap_exact_tokens_for_tokens(
-            origin(&dave),
+            origin(dave),
             NativeOrAssetId::Native,
             kind(a),
             ED,
             0,
-            dave.clone(),
+            dave,
         );
         assert!(
             matches!(
@@ -1413,7 +1413,7 @@ fn r9_a_swap_of_ones_whole_balance_keeps_the_ed_instead_of_failing() {
             "the ED cannot be spent, said up front: {:?}",
             r
         );
-        assert_eq!(vtrs(&dave), ED, "and nothing moved");
+        assert_eq!(vtrs(dave), ED, "and nothing moved");
     });
 }
 
@@ -1428,29 +1428,29 @@ fn r11_selling_ones_whole_token_position_goes_through() {
     new_test_ext().execute_with(|| {
         let a = graduated_with_volume(ALICE, 0);
         let dave: Acc = acc(6);
-        assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave.clone(), 20 * UNIT));
+        assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave, 20 * UNIT));
         assert_ok!(VitreusDex::swap_exact_tokens_for_tokens(
-            origin(&dave),
+            origin(dave),
             NativeOrAssetId::Native,
             kind(a),
             10 * UNIT,
             0,
-            dave.clone()
+            dave
         ));
-        let held = tok(a, &dave);
+        let held = tok(a, dave);
         assert!(held > 0);
-        let before = vtrs(&dave);
+        let before = vtrs(dave);
         let r = VitreusDex::swap_exact_tokens_for_tokens(
-            origin(&dave),
+            origin(dave),
             kind(a),
             NativeOrAssetId::Native,
             held,
             0,
-            dave.clone(),
+            dave,
         );
         assert!(r.is_ok(), "the whole position sells: {:?}", r);
-        assert_eq!(tok(a, &dave), 0, "nothing left");
-        assert!(vtrs(&dave) > before, "and the VTRS arrived");
+        assert_eq!(tok(a, dave), 0, "nothing left");
+        assert!(vtrs(dave) > before, "and the VTRS arrived");
     });
 }
 
@@ -1467,14 +1467,14 @@ fn r10_a_swap_that_would_deliver_nothing_says_so() {
         // millionth of the tokens, so 1 wei buys 0.99 of a unit.
         pool_buy(ALICE, a, 774_000 * UNIT);
         let dave: Acc = acc(5);
-        assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave.clone(), UNIT));
+        assert_ok!(Balances::transfer_allow_death(origin(ALICE), dave, UNIT));
         let r = VitreusDex::swap_exact_tokens_for_tokens(
-            origin(&dave),
+            origin(dave),
             NativeOrAssetId::Native,
             kind(a),
             1,
             0,
-            dave.clone(),
+            dave,
         );
         assert_eq!(
             r,
@@ -1482,6 +1482,6 @@ fn r10_a_swap_that_would_deliver_nothing_says_so() {
             "nothing would be delivered: {:?}",
             r
         );
-        assert_eq!(vtrs(&dave), UNIT, "and nothing moved");
+        assert_eq!(vtrs(dave), UNIT, "and nothing moved");
     });
 }

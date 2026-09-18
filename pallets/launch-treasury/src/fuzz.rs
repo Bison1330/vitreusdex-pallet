@@ -259,17 +259,104 @@ fn spendable(who: &Acc) -> u128 {
 }
 
 fn origin(who: &Acc) -> RuntimeOrigin {
-    RuntimeOrigin::signed(who.clone())
+    RuntimeOrigin::signed(*who)
 }
 
 fn bv(s: &[u8]) -> frame_support::BoundedVec<u8, frame_support::traits::ConstU32<50>> {
     s.to_vec().try_into().unwrap()
 }
 
-/// Run one op. `Ok(None)` is a no-op the world made meaningless (no launch
-/// yet, nothing to sell); `Ok(Some(res))` is a dispatch result to judge.
+// ---- the fee layer -------------------------------------------------------
+//
+// On the chain every signed extrinsic pays `energy-fee` in VNRG. A caller
+// short of VNRG has the pallet convert their LNRG, then buy the rest with
+// VTRS through the energy broker, `keep_alive` — and that VTRS lands in the
+// broker, so a person's own transaction moves the depth the treasury's next
+// sale is sized under, and the keeper's `compound` moves it before the call
+// runs (fees are withdrawn in pre-dispatch). A fee the caller cannot pay
+// makes the transaction invalid: it is never included and nothing runs.
+// The mock runtime has no transaction layer, so the harness charges the fee
+// itself, before each signed op, in that order. Alice and Bob start with
+// VNRG and pay from it until it runs out; Charlie and the keeper hold none
+// and buy from the first op, so both paths run in every program.
+
+/// A fixed stand-in for the weight-based fee: 0.001 VNRG per extrinsic.
+const FEE_VNRG: u128 = UNIT / 1_000;
+/// The broker's VTRS → VNRG rate, 1:1 with a 1 % fee like the LNRG leg.
+const VNRG_PER_VTRS: u128 = 1;
+/// The VNRG Alice and Bob start with: enough for ~200 extrinsics.
+pub const STARTING_VNRG: u128 = 200 * FEE_VNRG;
+
+/// The op's signer, for the ops a person signs. Root and mock-only ops pay
+/// nothing.
+fn signer(op: &Op) -> Option<Acc> {
+    let user = |i: u8| USERS[i as usize % USERS.len()];
+    Some(match op {
+        Op::CreateLaunch { creator, .. } => user(*creator),
+        Op::Buy { who, .. } | Op::Sell { who, .. } | Op::PoolSwap { who, .. } => user(*who),
+        Op::AddLiquidity { who, .. }
+        | Op::RemoveLiquidity { who, .. }
+        | Op::Compound { who, .. } => user(*who),
+        Op::ClaimCreatorFees { launch } => {
+            let id = launch_at(*launch)?;
+            Launches::<Test>::get(id).map(|l| l.creator_fee_recipient)?
+        },
+        Op::Graduate { .. }
+        | Op::Stake { .. }
+        | Op::Retarget
+        | Op::Harvest
+        | Op::Retire { .. }
+        | Op::Finalize { .. } => KEEPER,
+        _ => return None,
+    })
+}
+
+/// Charge `who` the fee as the chain would. `false` = the transaction is
+/// invalid and must not run.
+fn pay_fee(who: &Acc) -> bool {
+    use frame_support::traits::fungibles::Inspect as _;
+    let have = Assets::reducible_balance(VNRG_ID, who, Preservation::Expendable, Fortitude::Force);
+    let short = FEE_VNRG.saturating_sub(have);
+    // (The LNRG leg is not modelled: no user here holds LNRG, and the vault
+    // never signs.)
+    if short > 0 {
+        // `NativeToEnergyConverter`: `swap_tokens_for_exact_tokens(who, short,
+        // keep_alive = true)` — VTRS to the broker, VNRG to the caller.
+        let cost = short.saturating_mul(1_000 + BROKER_FEE_PERMILLE) / 1_000 / VNRG_PER_VTRS;
+        let paid = <Balances as frame_support::traits::fungible::Mutate<Acc>>::transfer(
+            who,
+            &BROKER,
+            cost,
+            Preservation::Preserve,
+        );
+        if paid.is_err() {
+            return false;
+        }
+        <Assets as FungiblesMutate<Acc>>::mint_into(VNRG_ID, who, short).expect("mint VNRG");
+    }
+    // `energy-fee` burns what it charges.
+    <Assets as FungiblesMutate<Acc>>::burn_from(
+        VNRG_ID,
+        who,
+        FEE_VNRG,
+        Preservation::Expendable,
+        Precision::Exact,
+        Fortitude::Force,
+    )
+    .is_ok()
+}
+
+/// Run one op. `None` is a no-op the world made meaningless (no launch yet,
+/// nothing to sell) or a transaction the fee layer refused; `Some(res)` is a
+/// dispatch result to judge.
 fn run(op: &Op) -> Option<Result<(), DispatchError>> {
-    let user = |i: u8| USERS[i as usize % USERS.len()].clone();
+    let user = |i: u8| USERS[i as usize % USERS.len()];
+    if let Some(who) = signer(op) {
+        if !pay_fee(&who) {
+            // Invalid transaction: never included.
+            return None;
+        }
+    }
     Some(match op {
         Op::CreateLaunch { creator, initial_buy } => Launchpad::create_launch(
             origin(&user(*creator)),
@@ -290,7 +377,7 @@ fn run(op: &Op) -> Option<Result<(), DispatchError>> {
         Op::Sell { who, launch, frac_bps } => {
             let id = launch_at(*launch)?;
             let w = user(*who);
-            let held = Assets::balance(asset_of(id), &w);
+            let held = Assets::balance(asset_of(id), w);
             let tokens = held / 10_000 * (*frac_bps as u128)
                 + (held % 10_000) * (*frac_bps as u128) / 10_000;
             if tokens == 0 {
@@ -313,19 +400,19 @@ fn run(op: &Op) -> Option<Result<(), DispatchError>> {
             let (a_in, a_out, amt) = if *buy {
                 (NativeOrAssetId::Native, kind(id), *amount)
             } else {
-                let held = Assets::balance(asset_of(id), &w);
+                let held = Assets::balance(asset_of(id), w);
                 let amt = (*amount).min(held);
                 if amt == 0 {
                     return None;
                 }
                 (kind(id), NativeOrAssetId::Native, amt)
             };
-            VitreusDex::swap_exact_tokens_for_tokens(origin(&w), a_in, a_out, amt, 0, w.clone())
+            VitreusDex::swap_exact_tokens_for_tokens(origin(&w), a_in, a_out, amt, 0, w)
         },
         Op::AddLiquidity { who, launch, vtrs } => {
             let id = launch_at(*launch)?;
             let w = user(*who);
-            let tokens = Assets::balance(asset_of(id), &w);
+            let tokens = Assets::balance(asset_of(id), w);
             if tokens == 0 {
                 return None;
             }
@@ -343,7 +430,7 @@ fn run(op: &Op) -> Option<Result<(), DispatchError>> {
             let id = launch_at(*launch)?;
             let w = user(*who);
             let pair = VitreusDex::canonical_pair(NativeOrAssetId::Native, kind(id));
-            let shares = LiquidityPositions::<Test>::get(&w, &pair).map(|p| p.shares).unwrap_or(0);
+            let shares = LiquidityPositions::<Test>::get(w, &pair).map(|p| p.shares).unwrap_or(0);
             let take = shares / 10_000 * (*frac_bps as u128)
                 + (shares % 10_000) * (*frac_bps as u128) / 10_000;
             if take == 0 {
@@ -375,7 +462,7 @@ fn run(op: &Op) -> Option<Result<(), DispatchError>> {
         },
         Op::SetTargets { mask } => LaunchTreasury::set_targets(
             RuntimeOrigin::root(),
-            (0..3).filter(|i| mask & (1 << i) != 0).map(|i| VALS[i].clone()).collect(),
+            (0..3).filter(|i| mask & (1 << i) != 0).map(|i| VALS[i]).collect(),
         ),
         Op::PayRewards { lnrg } => Assets::mint_into(LNRG_ID, &vault(), *lnrg).map(|_| ()),
         Op::Slash { bps } => {
@@ -383,7 +470,7 @@ fn run(op: &Op) -> Option<Result<(), DispatchError>> {
             Ok(())
         },
         Op::SetCooperable { validator, ok } => {
-            MockStaking::set_validator(VALS[*validator as usize % 3].clone(), *ok);
+            MockStaking::set_validator(VALS[*validator as usize % 3], *ok);
             Ok(())
         },
         Op::SetReputation { ok } => {
@@ -422,7 +509,7 @@ fn run(op: &Op) -> Option<Result<(), DispatchError>> {
                 },
                 What::Token => {
                     let id = launch_at(*launch)?;
-                    let held = Assets::balance(asset_of(id), &ALICE);
+                    let held = Assets::balance(asset_of(id), ALICE);
                     let _ = <Assets as FungiblesMutate<Acc>>::transfer(
                         asset_of(id),
                         &ALICE,
@@ -492,7 +579,7 @@ fn expected(op: &Op, e: &DispatchError) -> bool {
     // (issuance is ~10^27) overflows its U256-then-u128 arithmetic and is
     // answered with `Overflow`. Informational; a bound would name it.
     let absurd = |a: u128| a >= 10u128.pow(33);
-    let user = |i: &u8| USERS[*i as usize % USERS.len()].clone();
+    let user = |i: &u8| USERS[*i as usize % USERS.len()];
     match op {
         Op::CreateLaunch { creator, initial_buy } => {
             // The creation fee plus the first buy, from a caller that may be poor.
@@ -619,7 +706,7 @@ fn snapshot() -> Before {
 
 fn pool_k(id: LaunchId) -> U256 {
     let acct = pool_account(id);
-    U256::from(free(&acct)) * U256::from(Assets::balance(asset_of(id), &acct))
+    U256::from(free(&acct)) * U256::from(Assets::balance(asset_of(id), acct))
 }
 
 fn named_accounts() -> Vec<Acc> {
@@ -849,7 +936,7 @@ fn summary() -> String {
                 s.push_str(&format!(
                     " · pool VTRS {} tokens {}",
                     free(&a),
-                    Assets::balance(asset_of(id), &a)
+                    Assets::balance(asset_of(id), a)
                 ));
             }
             s.push('\n');
@@ -865,6 +952,10 @@ fn summary() -> String {
 
 /// Run a sequence; on the first violation, describe it with the op index.
 fn run_sequence(ops: &[Op]) -> Result<(), String> {
+    for who in [ALICE, BOB] {
+        <Assets as FungiblesMutate<Acc>>::mint_into(VNRG_ID, &who, STARTING_VNRG)
+            .expect("starting VNRG");
+    }
     let _ = <Assets as FungiblesMutate<Acc>>::burn_from(
         LNRG_ID,
         &vault(),
@@ -888,6 +979,32 @@ fn run_sequence(ops: &[Op]) -> Result<(), String> {
 
 fn cases() -> u32 {
     std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(32)
+}
+
+/// The fee layer does what the chain does: a caller without VNRG buys it
+/// with VTRS through the broker (the depth rises by the cost, `keep_alive`),
+/// the fee is burned, and a caller who cannot pay never runs.
+#[test]
+fn fee_layer_moves_the_brokers_depth_and_gates_the_call() {
+    new_test_ext().execute_with(|| {
+        let depth0 = free(&BROKER);
+        let vtrs0 = free(&CHARLIE);
+        // Charlie holds no VNRG: the op buys FEE_VNRG through the broker, then burns it.
+        assert!(run(&Op::CreateLaunch { creator: 2, initial_buy: 0 }).is_some());
+        let cost = FEE_VNRG * (1_000 + BROKER_FEE_PERMILLE) / 1_000 / VNRG_PER_VTRS;
+        assert_eq!(free(&BROKER) - depth0, cost, "the broker's depth rose by the fee's VTRS");
+        assert_eq!(Assets::balance(VNRG_ID, CHARLIE), 0, "the VNRG bought was burned as the fee");
+        assert!(
+            vtrs0 - free(&CHARLIE) >= cost + CREATION_FEE,
+            "Charlie paid the fee and the creation fee"
+        );
+        // A caller at the ED cannot pay: invalid, never runs.
+        let poor = acc(42);
+        frame_support::assert_ok!(Balances::transfer_allow_death(origin(&ALICE), poor, ED));
+        let launches = NextLaunchId::<Test>::get();
+        assert!(!pay_fee(&poor));
+        assert_eq!(NextLaunchId::<Test>::get(), launches);
+    });
 }
 
 proptest! {

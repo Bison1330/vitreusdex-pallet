@@ -418,7 +418,7 @@ impl TreasuryStaking<Acc, u128> for MockStaking {
         let value = value.min(free);
         let l = Ledger { active: value, ..Default::default() };
         Self::relock(stash, &l);
-        Self::with(|m| m.insert(stash.clone(), l));
+        Self::with(|m| m.insert(*stash, l));
         Ok(())
     }
     fn bond_extra(stash: &Acc, max_additional: u128) -> DispatchResult {
@@ -431,7 +431,7 @@ impl TreasuryStaking<Acc, u128> for MockStaking {
                 return Err(err("InsufficientBond"));
             }
             Self::relock(stash, &l);
-            Self::with(|m| m.insert(stash.clone(), l));
+            Self::with(|m| m.insert(*stash, l));
         }
         Ok(())
     }
@@ -457,7 +457,7 @@ impl TreasuryStaking<Acc, u128> for MockStaking {
         }
         l.cooperating = true;
         l.targets = targets.clone();
-        Self::with(|m| m.insert(stash.clone(), l));
+        Self::with(|m| m.insert(*stash, l));
         COOPERATE_CALLS.with(|c| c.borrow_mut().push(targets));
         Ok(())
     }
@@ -465,7 +465,7 @@ impl TreasuryStaking<Acc, u128> for MockStaking {
         let mut l = Self::ledger(stash).ok_or(err("NotController"))?;
         l.cooperating = false;
         l.targets.clear();
-        Self::with(|m| m.insert(stash.clone(), l));
+        Self::with(|m| m.insert(*stash, l));
         Ok(())
     }
     fn unbond(stash: &Acc, value: u128) -> DispatchResult {
@@ -498,7 +498,7 @@ impl TreasuryStaking<Acc, u128> for MockStaking {
             }
         }
         Self::relock(stash, &l);
-        Self::with(|m| m.insert(stash.clone(), l));
+        Self::with(|m| m.insert(*stash, l));
         Ok(())
     }
     fn withdraw_unbonded(stash: &Acc) -> Result<u128, DispatchError> {
@@ -511,7 +511,7 @@ impl TreasuryStaking<Acc, u128> for MockStaking {
         if l.total() == 0 {
             Self::with(|m| m.remove(stash));
         } else {
-            Self::with(|m| m.insert(stash.clone(), l));
+            Self::with(|m| m.insert(*stash, l));
         }
         Ok(withdrawn)
     }
