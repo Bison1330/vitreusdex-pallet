@@ -1144,7 +1144,7 @@ fn dump_corpus() {
                 AdvanceBlocks { n: 200 },
                 SetTerms { impact: 50, bounty: 50, min_stake: UNIT, interval: 10, dormancy: 100 },
                 Retire { launch: 0 },
-                AdvanceEras { n: 8 },
+                AdvanceEras { n: 2 },
                 Finalize { launch: 0 },
             ],
         ),
